@@ -113,3 +113,15 @@ def test_gap_remains_durable_after_later_success(store):
  value=batch();store.commit('dell-control','system','',{},100,{**value,'gap':True})
  store.commit('dell-control','system','',value['cursor'],100,value)
  with store.database() as db:assert db.execute('SELECT count(*) FROM stream_gaps').fetchone()[0]==1
+
+def test_remote_extension_sudo_grant_matches_every_sealed_runbook_invocation():
+ import yaml
+ root=Path(__file__).parents[2]
+ book=root/'runbooks/local/enable-logstream.yaml'
+ if not book.exists():book=book.with_suffix('.yaml.example')
+ value=yaml.safe_load(book.read_text())
+ grants=(root/'broker/deploy/sudoers/ops-broker-enable-logstream').read_text().splitlines()
+ for resource in value['parameters']['resource']['values']:
+  for bundle in value['parameters']['bundle_sha256']['values']:
+   command=' '.join(x.format(resource=resource,bundle_sha256=bundle) for x in value['command']['argv'][2:])
+   assert 'opsbroker ALL=(root) NOPASSWD: '+command in grants

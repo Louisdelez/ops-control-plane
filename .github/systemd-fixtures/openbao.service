@@ -1,0 +1,7 @@
+# Offline dependency fixture for systemd-analyze verify only.
+# Production obtains this unit from the OpenBao package. Never install this fixture.
+[Unit]
+Description=External OpenBao dependency for static CI verification
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/true

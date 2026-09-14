@@ -19,6 +19,8 @@ jobs:
           sudo apt-get install -y age
           python -m pip install -e './broker[dev,mcp]' -e './memory[dev,mcp]' -e './orchestrator[dev,mcp]' -e './bridges/zulip[dev]' -e './provider-discovery[dev]' -e ./native_ops
       - name: Run service and native contracts
+        env:
+          SYSTEMD_UNIT_PATH: "${{ github.workspace }}/.github/systemd-fixtures:${{ github.workspace }}/systemd:"
         run: |
           python -m pytest broker/tests -q
           python -m pytest memory/tests -q

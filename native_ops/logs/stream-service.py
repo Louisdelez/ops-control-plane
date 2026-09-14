@@ -66,11 +66,22 @@ def collect_one(fetch,host,source,service=''):
  commit(host,source,service,cursor,since,value)
  return bool(value.get('more'))
 
+def activated(host):
+ if host=='dell-control':return True
+ # A pending/expired request must not create repeated refused SSH sessions.
+ with sqlite3.connect('file:/var/lib/ops-broker/state.db?mode=ro',uri=True,timeout=5) as db:
+  rows=db.execute("SELECT parameters_json FROM actions WHERE runbook_id='security.enable-logstream.v1' AND requested_by='codex-supervised' AND status='succeeded'").fetchall()
+ return any(json.loads(r[0])=={'resource':host,'bundle_sha256':'4516ad2ab4a537b5620e528d671f9b587528f79446e3ad4506bad8a782c86a24'} for r in rows)
+
 def worker(host):
  fetch=runpy.run_path('/usr/local/libexec/ops-logs/service.py')['fetch']
  sources=[];last_discovery=0
  while not STOP.is_set():
   backlog=False
+  try:ready=activated(host)
+  except Exception:ready=False
+  if not ready:
+   failed(host,'system','','activation_pending');failed(host,'docker','','activation_pending');STOP.wait(15);continue
   if time.monotonic()-last_discovery>60:
    try:
     value=fetch(host,{'action':'sources'},stream=True)
