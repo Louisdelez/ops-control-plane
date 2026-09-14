@@ -1291,7 +1291,8 @@ def _extract_archive(artifact: Path, destination: Path, target: ReleaseTarget) -
 
 
 def _freeze_release(path: Path) -> None:
-    """Remove write bits from staged release content without following links."""
+    """Keep the release root group on every member, then remove write bits."""
+    reader_gid = path.stat().st_gid
     for directory, directories, files in os.walk(path, topdown=False, followlinks=False):
         directory_path = Path(directory)
         for name in files:
@@ -1299,12 +1300,15 @@ def _freeze_release(path: Path) -> None:
             if item.is_symlink():
                 raise OpsError("unsafe_release", f"unexpected file symlink while freezing: {item}")
             mode = item.stat().st_mode
+            os.chown(item, -1, reader_gid, follow_symlinks=False)
             os.chmod(item, 0o550 if mode & 0o111 else 0o440)
         for name in directories:
             item = directory_path / name
             if item.is_symlink():
                 continue  # controlled persistent link; never chmod its target
+            os.chown(item, -1, reader_gid, follow_symlinks=False)
             os.chmod(item, 0o550)
+        os.chown(directory_path, -1, reader_gid, follow_symlinks=False)
         os.chmod(directory_path, 0o550)
 
 

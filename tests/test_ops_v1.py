@@ -540,3 +540,36 @@ def test_daily_report_marks_absent_failed_and_stale_local_backup_data(
     assert "backup mémoire périmé" in payload["summary"]
     assert "Raft OpenBao absent" in payload["summary"]
     assert "Sondes distantes non activees" in payload["summary"]
+
+
+def test_freeze_release_preserves_reader_group_and_external_data(tmp_path, monkeypatch):
+    release = tmp_path / "release"
+    web = release / "web"
+    web.mkdir(parents=True)
+    page = web / "index.html"
+    page.write_text("ready")
+    persistent = tmp_path / "data"
+    persistent.mkdir()
+    state = persistent / "state.txt"
+    state.write_text("preserve")
+    state.chmod(0o600)
+    (release / "data").symlink_to(persistent, target_is_directory=True)
+    changes = []
+    real_chown = os.chown
+    def record_chown(path, uid, gid, **kwargs):
+        changes.append((Path(path), uid, gid, kwargs))
+        return real_chown(path, uid, gid, **kwargs)
+    monkeypatch.setattr(ops.os, "chown", record_chown)
+    gid = release.stat().st_gid
+    try:
+        ops._freeze_release(release)
+        assert {p for p, _, _, _ in changes} == {release, web, page}
+        assert all(uid == -1 and group == gid and opts == {"follow_symlinks": False}
+                   for _, uid, group, opts in changes)
+        assert page.stat().st_mode & 0o777 == 0o440
+        assert web.stat().st_mode & 0o777 == 0o550
+        assert state.stat().st_mode & 0o777 == 0o600
+        assert state.read_text() == "preserve"
+    finally:
+        release.chmod(0o700)
+        web.chmod(0o700)

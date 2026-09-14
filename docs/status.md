@@ -8,15 +8,15 @@ Broker avec missions, runbooks, permissions et audit ; mémoire SQLite/Qdrant ; 
 
 ## Validation historique
 
-Sur l’installation de développement, des restaurations isolées des données applicatives ont été réalisées. La reprise des services et la lecture de la mémoire après un redémarrage réel ont été vérifiées le 14 septembre 2026. Les preuves opérationnelles privées ne sont pas publiées. Ces observations ne garantissent pas une installation sur une autre machine.
+Sur l’installation de développement, des restaurations isolées des données applicatives ont été réalisées. La reprise des services et la lecture de la mémoire après un redémarrage réel ont été vérifiées le 14 septembre 2026. La réception d’une notification PWA sur iPhone a été confirmée. Un premier déploiement réel de la PWA a été validé ; une correction des permissions a ensuite été vérifiée sur les réponses HTTP intégrales. Les preuves opérationnelles privées ne sont pas publiées. Ces observations ne garantissent pas une installation sur une autre machine.
 
 ## Travaux restants
 
 1. Finaliser et tester la coordination entre équipes d’agents.
-2. Raccorder et recetter le circuit staging → production.
+2. Généraliser et recetter le circuit staging → production pour les autres applications.
 3. Démontrer une reconstruction complète sur machine vierge.
 4. Poursuivre l’indexation API sous budget et mesurer sa qualité.
-5. Confirmer la réception physique des notifications sur l’iPhone cible.
+5. Compléter les scénarios de notifications et de reprise : téléphone verrouillé, session expirée et retour après interruption.
 6. Généraliser la configuration pour une installation reproductible hors de l’environnement d’origine.
 
 ## Publication

@@ -106,3 +106,9 @@ node_modules/
 # Environment files are private; this reviewed source file contains references only.
 *.env
 !orchestrator/config/orchestrator.env
+
+# Private knowledge and recovered infrastructure inventories.
+inventory/center-document-index.json
+inventory/knowledge-sources.json
+inventory/access-register.json
+inventory/application-register.json
