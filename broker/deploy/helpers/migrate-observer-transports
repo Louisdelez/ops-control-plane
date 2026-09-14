@@ -1,0 +1,96 @@
+#!/usr/bin/python3 -I
+"""Apply one sealed, owner-approved transport migration and verify both backup copies."""
+import fcntl,hashlib,json,os,re,shutil,sqlite3,stat,subprocess,sys,time
+from pathlib import Path
+RUNBOOK='security.migrate-observer-transports.v1'
+TARGETS={'admin-transport.py':'/usr/local/libexec/ops-runbooks/remote-admin-transport.py','preflight-worker.py':'/usr/local/libexec/ops-runbooks/remote-preflight-worker','periodic-copy.py':'/usr/local/libexec/ops-runbooks/periodic-recovery-copy','observer-ready.conf':'/etc/systemd/system/ops-remote-preflight@.service.d/40-observer-ready.conf'}
+OBSERVER_BUNDLE='4516ad2ab4a537b5620e528d671f9b587528f79446e3ad4506bad8a782c86a24'
+def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None
+def protected(p):
+ st=p.lstat()
+ if not stat.S_ISREG(st.st_mode) or st.st_uid!=0 or st.st_mode&0o022 or st.st_size>200000:raise ValueError('Invalid release file')
+ return p.read_bytes()
+def run(*args,timeout=45):return subprocess.run(args,stdin=subprocess.DEVNULL,capture_output=True,check=True,timeout=timeout)
+def replace(target,data,mode):
+ target.parent.mkdir(parents=True,exist_ok=True)
+ if target.is_symlink():raise ValueError('Unsafe target')
+ next=target.with_name(target.name+'.migration-next')
+ with next.open('xb') as f:f.write(data);f.flush();os.fsync(f.fileno())
+ next.chmod(mode);os.chown(next,0,0);os.replace(next,target)
+def approval(bundle):
+ with sqlite3.connect('file:/var/lib/ops-broker/state.db?mode=ro',uri=True) as db:
+  db.row_factory=sqlite3.Row
+  ready=set()
+  for row in db.execute("SELECT parameters_json FROM actions WHERE status='succeeded' AND runbook_id='security.enable-logstream.v1' AND requested_by='codex-supervised'"):
+   params=json.loads(row['parameters_json'])
+   if params.get('bundle_sha256')==OBSERVER_BUNDLE:ready.add(params.get('resource'))
+  if not {'nas','prod','gamebox','edge-vps'}.issubset(ready):raise ValueError('Observer extension still pending')
+  matches=[]
+  for row in db.execute("SELECT * FROM actions WHERE runbook_id=? AND status='running'",(RUNBOOK,)):
+   decision=db.execute('SELECT * FROM approvals WHERE action_id=? ORDER BY created_at LIMIT 1',(row['id'],)).fetchone()
+   if row['requested_by']=='codex-supervised' and row['action_class']=='C' and json.loads(row['parameters_json'])=={'bundle_sha256':bundle} and decision and decision['decision']=='approve' and decision['actor_id']=='zulip:8' and decision['source']=='zulip':matches.append(row['id'])
+  if len(matches)!=1:raise ValueError('One actual approved action required')
+  return matches[0]
+def main():
+ if os.geteuid()!=0 or len(sys.argv)!=2 or not re.fullmatch('[a-f0-9]{64}',sys.argv[1]):raise ValueError('Invalid invocation')
+ os.umask(0o077);bundle=sys.argv[1];base=Path('/var/lib/ops-transport-releases')/bundle
+ raw=protected(base/'manifest.json');manifest=json.loads(raw)
+ if hashlib.sha256(raw).hexdigest()!=bundle or set(manifest['files'])!=set(TARGETS):raise ValueError('Release mismatch')
+ if manifest['helper_sha256']!=digest(Path(__file__)):raise ValueError('Helper mismatch')
+ files={name:protected(base/name) for name in TARGETS}
+ for name,value in files.items():
+  if hashlib.sha256(value).hexdigest()!=manifest['files'][name]:raise ValueError('Member mismatch')
+  target=Path(TARGETS[name])
+  if target.is_symlink() or digest(target)!=manifest['previous'][name]:raise ValueError('Installed state changed')
+ action=approval(bundle);state=Path('/var/lib/ops-periodic-recovery')
+ with (state/'transport-migration.lock').open('a') as lock:
+  fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  archive=Path('/var/lib/ops-native-archives')/('transport-migration-'+str(time.time_ns()));archive.mkdir(mode=0o700)
+  prior={};enabled=[]
+  for host in ['nas','edge-vps']:
+   marker=state/(host+'.enabled.json')
+   if digest(marker)!=manifest['activation'][host]:raise ValueError('Activation changed')
+   timer='ops-periodic-recovery@'+host+'.timer'
+   if subprocess.run(['systemctl','is-enabled','--quiet',timer],capture_output=True).returncode==0:enabled.append(timer)
+  try:
+   for timer in enabled:run('systemctl','stop',timer)
+   for host in ['nas','edge-vps']:
+    if subprocess.run(['systemctl','is-active','--quiet','ops-periodic-recovery@'+host+'.service'],capture_output=True).returncode==0:raise ValueError('Backup copy running')
+   paths=[Path(p) for p in TARGETS.values()]+[state/(h+'.enabled.json') for h in ['nas','edge-vps']]
+   for i,path in enumerate(paths):
+    if path.exists():
+     saved=archive/('before-'+str(i));shutil.copy2(path,saved);prior[str(path)]=str(saved)
+    else:prior[str(path)]=None
+   (archive/'authorization.json').write_text(json.dumps({'broker_action_id':action,'bundle_sha256':bundle,'previous':prior}))
+   for name,target in TARGETS.items():replace(Path(target),files[name],0o644 if name.endswith('.conf') else 0o755)
+   pins={n:digest(Path('/usr/local/libexec/ops-runbooks')/n) for n in ['periodic-recovery-copy','receive-recovery-bundle.py','remote-admin-transport.py']}
+   for host in ['nas','edge-vps']:
+    marker=state/(host+'.enabled.json');activation=json.loads(marker.read_text());activation.update(pinned=pins,transport_migration_action_id=action,transport_migrated_at=time.time())
+    replace(marker,json.dumps(activation).encode(),0o600)
+   run('systemctl','daemon-reload')
+   units=['ops-periodic-recovery@'+h+'.service' for h in ['nas','edge-vps']]
+   def states(unit):
+    return dict(line.split('=',1) for line in run('systemctl','show',unit,'--property=ActiveState,Result,ExecMainStatus,ExecMainStartTimestampMonotonic',timeout=5).stdout.decode().splitlines() if '=' in line)
+   before={unit:int(states(unit)['ExecMainStartTimestampMonotonic']) for unit in units}
+   run('systemctl','start','--no-block',*units,timeout=5)
+   deadline=time.monotonic()+240
+   while True:
+    current={unit:states(unit) for unit in units}
+    finished=[unit for unit,v in current.items() if int(v['ExecMainStartTimestampMonotonic'])>before[unit] and v['ActiveState'] in {'inactive','failed'}]
+    if any(current[u]['Result']!='success' or current[u]['ExecMainStatus']!='0' for u in finished):raise ValueError('Backup copy failed')
+    if len(finished)==len(units):break
+    if time.monotonic()>deadline:raise ValueError('Backup copies timed out')
+    time.sleep(1)
+   result={'status':'migrated_and_copies_verified','action_id':action,'backup_targets':['nas','edge-vps'],'preflight_identity':'opsreader','administrative_identity':'opsremoteadmin','personal_ssh_used':False,'archive':str(archive)}
+   (archive/'result.json').write_text(json.dumps(result));print(json.dumps(result))
+  except BaseException:
+   run('systemctl','stop','ops-periodic-recovery@nas.service','ops-periodic-recovery@edge-vps.service',timeout=30)
+   for name,saved in prior.items():
+    if saved:shutil.copy2(saved,name)
+    else:Path(name).unlink(missing_ok=True)
+   run('systemctl','daemon-reload');(archive/'rollback.json').write_text(json.dumps({'state_restored':True,'action_id':action}));raise
+  finally:
+   for timer in enabled:run('systemctl','start',timer)
+if __name__=='__main__':
+ try:main()
+ except Exception as error:print(json.dumps({'status':'needs_review','category':type(error).__name__}));raise SystemExit(1)

@@ -16,6 +16,7 @@ def main():
     archive=Path('/var/lib/ops-native-archives')/('periodic-recovery-'+str(time.time_ns()))
     archive.mkdir(mode=0o700)
     files={
+        Path('/usr/local/libexec/ops-runbooks/remote-admin-transport.py'):(ROOT/'broker/deploy/helpers/remote-admin-transport.py',0o644),
         Path('/usr/local/libexec/ops-runbooks/periodic-recovery-enable'):(ROOT/'broker/deploy/helpers/periodic-recovery-enable',0o755),
         Path('/usr/local/libexec/ops-runbooks/periodic-recovery-copy'):(ROOT/'broker/deploy/helpers/periodic-recovery-copy',0o755),
         Path('/usr/local/libexec/ops-runbooks/receive-recovery-bundle.py'):(ROOT/'broker/deploy/recovery/receive-recovery-bundle.py',0o644),

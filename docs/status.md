@@ -29,4 +29,6 @@ Les runbooks historiques de publication Zulip v2/v3 sont conservés en `.yaml.ex
 
 ## Supervision — livraison 0.8.3
 
-Interface Infrastructure native avec graphiques, disques, processus, historique, illustrations embarquées et journaux. Collecte continue locale vérifiée ; extensions distantes préparées et soumises à approbation, sans les déclarer actives par anticipation. Pagination durable des archives et état des sources intégrés. La recette Tauri réelle et 174 tests natifs passent sur l’installation de développement. Les pilotes Docker autres que json-file et la récupération de journaux déjà supprimés ne sont pas couverts.
+Interface Infrastructure native avec graphiques, disques, processus, historique, illustrations embarquées et journaux. Collecte continue installée et vérifiée sur cinq machines après approbations réelles des quatre extensions distantes. Transports SSH dédiés installés ; les quatre preflights réussissent. Pagination durable des archives et état des sources intégrés. La recette Tauri réelle et 190 tests natifs passent sur l’installation de développement. Les pilotes Docker autres que json-file et la récupération de journaux déjà supprimés ne sont pas couverts.
+
+La sauvegarde des journaux est désormais compressée avant chiffrement, vérifiée par aller-retour et répliquée vers deux destinations. Les limites de taille restent explicites. Un audit en lecture seule des fournisseurs distingue les accès valides des droits insuffisants ; il ne crée pas de nouvelles habilitations.

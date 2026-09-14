@@ -11,7 +11,7 @@ def main():
  marker=root/(target+'.enabled.json')
  if marker.exists():raise ValueError('Existing activation must be reviewed, not overwritten')
  pinned={name:hashlib.sha256((Path('/usr/local/libexec/ops-runbooks')/name).read_bytes()).hexdigest()
-         for name in ('periodic-recovery-copy','receive-recovery-bundle.py')}
+         for name in ('periodic-recovery-copy','receive-recovery-bundle.py','remote-admin-transport.py')}
  with marker.open('x') as stream:
   json.dump({'schema_version':1,'resource':target,'activated_at':time.time(),'pinned':pinned,
              'scope':'daily append-only ciphertext; 256MiB per bundle, 20GiB destination quota, no deletion'},stream)

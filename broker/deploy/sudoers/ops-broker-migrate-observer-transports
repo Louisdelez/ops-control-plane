@@ -1,0 +1,1 @@
+opsbroker ALL=(root) NOPASSWD: /usr/local/libexec/ops-runbooks/migrate-observer-transports d4195d96c75b5a2d426e221010149c3dcd02dde4d1e333fa275d9a2ebd84f704

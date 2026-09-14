@@ -1,0 +1,76 @@
+#!/usr/bin/python3 -I
+"""Fixed read-only provider checks; credentials remain inside the narrow root consumer."""
+import hashlib,json,os,re,resource,ssl,stat,subprocess,sys,time,urllib.error,urllib.request
+from pathlib import Path
+REFS={'ovh-key':'kv-center-import/data/secrets/ovh-app-key','ovh-secret':'kv-center-import/data/secrets/ovh-app-secret','ovh-consumer':'kv-center-import/data/secrets/ovh-consumer-key','infomaniak':'kv-local-admin/data/dns/infomaniak-owner','deepseek':'kv-infra-shared/data/llm/deepseek'}
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+ def redirect_request(self,*a,**kw):raise ValueError('Redirect refused')
+def context(ca):
+ st=Path(ca).stat()
+ if st.st_uid!=0 or st.st_mode&0o022:raise ValueError('Trust store unsafe')
+ ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT);ctx.load_verify_locations(cafile=ca);return ctx
+class Client:
+ def __init__(self,origin,ca):
+  self.origin=origin;self.opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),urllib.request.HTTPSHandler(context=context(ca)))
+ def call(self,path,headers=None,data=None):
+  if not path.startswith('/') or '://' in path or '\r' in path or '\n' in path:raise ValueError('Invalid path')
+  req=urllib.request.Request(self.origin+path,headers={'Accept':'application/json',**(headers or {})},data=json.dumps(data).encode() if data is not None else None,method='POST' if data is not None else 'GET')
+  try:
+   with self.opener.open(req,timeout=12) as response:raw=response.read(1048577);status=response.status
+  except urllib.error.HTTPError as e:return e.code,None
+  if len(raw)>1048576:raise ValueError('Response limit')
+  return status,json.loads(raw) if raw else {}
+def credential(name):
+ p=Path('/etc/credstore.encrypted')/name;st=p.lstat()
+ if not stat.S_ISREG(st.st_mode) or st.st_uid!=0 or st.st_mode&0o077:raise ValueError('Credential unavailable')
+ return subprocess.run(['/usr/bin/systemd-creds','decrypt','--name='+name,str(p),'-'],capture_output=True,check=True,timeout=5).stdout.decode().strip()
+def secret(vault,token,name,field):
+ code,data=vault.call('/v1/'+REFS[name],{'X-Vault-Token':token})
+ if code!=200:raise ValueError('Reference unavailable')
+ value=data['data']['data'][field];data.clear()
+ if not isinstance(value,str) or not 1<=len(value)<=4096 or any(c in value for c in ['\r','\n']):raise ValueError('Reference format')
+ return value.strip()
+def main():
+ if os.geteuid()!=0 or len(sys.argv)!=1:raise ValueError('Invalid invocation')
+ resource.setrlimit(resource.RLIMIT_CORE,(0,0))
+ vault=Client('https://127.0.0.1:8200','/etc/pki/ca-trust/source/anchors/openbao-local.crt');token='';report={'checked_at':time.time(),'read_only':True,'secret_disclosure':False,'providers':[]}
+ try:
+  code,value=vault.call('/v1/auth/approle/login',data={'role_id':credential('ops-provider-audit-role-id'),'secret_id':credential('ops-provider-audit-secret-id')})
+  if code!=200:raise ValueError('Audit identity unavailable')
+  token=value['auth']['client_token'];value.clear();ca='/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem'
+  for provider in ['ovh','infomaniak','deepseek']:
+   checks=[]
+   try:
+    if provider=='ovh':
+     key=secret(vault,token,'ovh-key','value');app=secret(vault,token,'ovh-secret','value');consumer=secret(vault,token,'ovh-consumer','value');client=Client('https://eu.api.ovh.com/1.0',ca)
+     code,stamp=client.call('/auth/time')
+     if code!=200 or type(stamp) is not int:raise ValueError('Provider time unavailable')
+     for path in ['/auth/currentCredential','/domain/zone/example.org','/vps']:
+      timestamp=str(stamp);url=client.origin+path;signature='$1$'+hashlib.sha1('+'.join([app,consumer,'GET',url,'',timestamp]).encode()).hexdigest()
+      code,data=client.call(path,{'X-Ovh-Application':key,'X-Ovh-Consumer':consumer,'X-Ovh-Timestamp':timestamp,'X-Ovh-Signature':signature})
+      checks.append({'check':{'/auth/currentCredential':'credential','/domain/zone/example.org':'dns-zone','/vps':'vps-list'}[path],'http_status':code,'accessible':code==200,'item_count':len(data) if isinstance(data,list) else None})
+      if path=='/auth/currentCredential' and isinstance(data,dict):
+       rules=data.get('rules',data.get('accessRules',[]))
+       if isinstance(rules,list):checks[-1]['declared_rules']=[{'method':r.get('method'),'path':r.get('path')} for r in rules if isinstance(r,dict) and r.get('method') in {'GET','POST','PUT','DELETE'} and isinstance(r.get('path'),str) and re.fullmatch(r'[A-Za-z0-9_./*?@{}:-]{1,256}',r['path'])][:100]
+      if isinstance(data,dict):data.clear()
+     del key,app,consumer,signature
+    elif provider=='infomaniak':
+     key=secret(vault,token,'infomaniak','api_token');client=Client('https://api.infomaniak.com',ca)
+     for zone in ['game.example.org','app.example.org']:
+      code,data=client.call('/2/zones/'+zone+'/records',{'Authorization':'Bearer '+key});checks.append({'check':'dns-'+zone,'http_status':code,'accessible':code==200})
+      if isinstance(data,dict):data.clear()
+     key=''
+    else:
+     key=secret(vault,token,'deepseek','api_key');client=Client('https://api.deepseek.com',ca)
+     code,data=client.call('/user/balance',{'Authorization':'Bearer '+key});checks.append({'check':'account-access','http_status':code,'accessible':code==200});key=''
+     if isinstance(data,dict):data.clear()
+    report['providers'].append({'provider':provider,'status':'verified' if all(c['accessible'] for c in checks) else 'permission_or_access_unavailable','checks':checks})
+   except Exception as e:report['providers'].append({'provider':provider,'status':'unavailable','category':type(e).__name__,'checks':checks})
+ finally:
+  if token:
+   try:vault.call('/v1/auth/token/revoke-self',{'X-Vault-Token':token},data={})
+   finally:token=''
+ print(json.dumps(report))
+if __name__=='__main__':
+ try:main()
+ except Exception as e:print(json.dumps({'status':'unavailable','category':type(e).__name__,'secret_disclosure':False}));raise SystemExit(1)

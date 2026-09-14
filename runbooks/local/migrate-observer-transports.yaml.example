@@ -1,0 +1,15 @@
+id: security.migrate-observer-transports.v1
+version: 1
+project: infra-shared
+action_class: C
+description: "Migrer le preflight vers le compte observateur et les anciennes copies vers OpenBao ; préserver les accords antérieurs, vérifier deux copies chiffrées NAS/VPS, archiver et restaurer les fichiers en cas d’échec. Nécessite les quatre extensions logstream réussies."
+timeout_seconds: 300
+command:
+  argv: [/usr/bin/sudo, -n, /usr/local/libexec/ops-runbooks/migrate-observer-transports, "{bundle_sha256}"]
+parameters:
+  bundle_sha256:
+    type: enum
+    values: [d4195d96c75b5a2d426e221010149c3dcd02dde4d1e333fa275d9a2ebd84f704]
+output:
+  max_bytes: 4096
+  redact: true

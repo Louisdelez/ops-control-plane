@@ -69,7 +69,17 @@ def main():
                 ciphertext=parts/name
                 with ciphertext.open('rb') as incoming:digest=hashlib.file_digest(incoming,'sha256').hexdigest()
                 if manifest.get('file')!=Path(name).name or manifest.get('sha256')!=digest or manifest.get('bytes')!=ciphertext.stat().st_size:raise ValueError('Telemetry manifest mismatch')
-                temporary=work/'telemetry-check.sqlite3';decrypt(parts/name,temporary)
+                temporary=work/'telemetry-check.sqlite3'
+                encoding=manifest.get('encoding','identity')
+                if encoding=='gzip':
+                    compressed=work/'telemetry-check.sqlite3.gz';decrypt(parts/name,compressed)
+                    compression_spec=importlib.util.spec_from_file_location('telemetry_compression',SOURCE/'native_ops/telemetry/backup.py')
+                    compression=importlib.util.module_from_spec(compression_spec);compression_spec.loader.exec_module(compression)
+                    compression.expand(compressed,temporary,manifest.get('uncompressed_bytes'))
+                    if compression.sha(temporary)!=manifest.get('uncompressed_sha256'):raise ValueError('Expanded telemetry digest differs')
+                    compressed.unlink()
+                elif encoding=='identity':decrypt(parts/name,temporary)
+                else:raise ValueError('Unsupported telemetry encoding')
                 report['telemetry']['tables']+=sql_check(temporary);report['telemetry']['archives_verified']+=1;temporary.unlink()
             stage='qdrant'
             path=SOURCE/'memory/backup/ops_memory_backup.py';spec=importlib.util.spec_from_file_location('bundle_memory_restore',path);module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)

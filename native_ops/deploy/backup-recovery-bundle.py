@@ -81,10 +81,21 @@ def sources():
             raise ValueError('Telemetry backup is stale')
         ledger_path=Path('/var/lib/ops-telemetry/replication-ledger.json')
         ledger=json.loads(ledger_path.read_text()) if ledger_path.exists() else {}
+        manifests=[];newest={}
         for manifest in sorted(telemetry.glob('*.json')):
             if manifest.name=='latest.json': continue
             entry=json.loads(manifest.read_text())
-            if ledger.get(entry['file'],{}).get('sha256')==entry['sha256'] and time.time()-entry['created_at']>36*3600: continue
+            manifests.append((manifest,entry))
+            source=entry.get('source')
+            if not source:raise ValueError('Telemetry source missing')
+            if not entry.get('sealed_partition') and entry['created_at']>newest.get(source,{}).get('created_at',0):newest[source]=entry
+        for manifest,entry in manifests:
+            # Already-replicated historical points remain on both destinations.
+            # Carry the current point and every not-yet-replicated archive once,
+            # rather than repeating all growing log snapshots for 36 hours.
+            replicated=ledger.get(entry['file'],{}).get('sha256')==entry['sha256']
+            current=newest.get(entry['source'],{}).get('file')==entry['file']
+            if replicated and not current:continue
             file=telemetry/entry['file'];regular(file)
             if digest(file)!=entry['sha256']:raise ValueError('Telemetry ciphertext differs')
             selected['telemetry/'+file.name]=file

@@ -1,0 +1,12 @@
+id: inventory.provider-access.v1
+version: 1
+project: infra-shared
+action_class: A
+description: Vérifier en lecture seule les accès OVH, zones Infomaniak et compte DeepSeek via des références OpenBao précises ; aucun secret, solde ni contenu DNS renvoyé au modèle
+timeout_seconds: 180
+command:
+  argv: [/usr/bin/sudo, -n, /usr/local/libexec/ops-runbooks/provider-access]
+parameters: {}
+output:
+  max_bytes: 8192
+  redact: true

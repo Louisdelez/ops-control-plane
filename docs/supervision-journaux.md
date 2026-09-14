@@ -68,3 +68,20 @@ conservation des signalements de trous. La recette Tauri couvre la consultation
 réelle, l’état de collecte, les filtres et les exports. L’état d’activation de
 chaque serveur doit être lu dans le broker et dans la vue de collecte ; la
 présence du code ne prouve pas son déploiement.
+
+## Format des sauvegardes
+
+Les nouveaux snapshots SQLite sont compressés en gzip avant chiffrement age.
+Le suffixe historique `.sqlite3.age` est conservé ; le manifeste indique
+`encoding: gzip`, la taille décompressée et son SHA-256. Un ancien manifeste
+sans `encoding` désigne une base SQLite chiffrée directement. Le restaurateur
+accepte ces deux formats et refuse les autres.
+
+Chaque nouveau snapshot subit réellement chiffrement, déchiffrement,
+décompression, comparaison des empreintes et contrôle d’intégrité SQLite.
+La décompression est bornée à la taille déclarée, au maximum 4 Gio. Le paquet
+transporté conserve le point courant et les archives pas encore répliquées ;
+les points historiques déjà répliqués restent dans les sauvegardes distantes.
+Les paquets sont limités à 256 Mio, chaque destination à 20 Gio. Un dépassement
+arrête la copie et doit être traité ; il ne purge aucune donnée. La compression
+réduit le volume mais ne remplace pas la planification de capacité.
