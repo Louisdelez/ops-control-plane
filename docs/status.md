@@ -26,3 +26,7 @@ L’historique public démarre avec une copie des sources du chantier, y compris
 Les anciens manifestes, empreintes et scripts de migration servent de références et de fixtures. Ils ne sont pas des signatures valides de cet export modifié. Les versions, prix et catalogues historiques nécessitent leur propre actualisation.
 
 Les runbooks historiques de publication Zulip v2/v3 sont conservés en `.yaml.example`, hors du registre actif : leurs helpers ne figurent pas dans la politique publique d’exécution.
+
+## Supervision — livraison 0.8.3
+
+Interface Infrastructure native avec graphiques, disques, processus, historique, illustrations embarquées et journaux. Collecte continue locale vérifiée ; extensions distantes préparées et soumises à approbation, sans les déclarer actives par anticipation. Pagination durable des archives et état des sources intégrés. La recette Tauri réelle et 174 tests natifs passent sur l’installation de développement. Les pilotes Docker autres que json-file et la récupération de journaux déjà supprimés ne sont pas couverts.

@@ -66,6 +66,11 @@ backups/
 exports/
 sessions/
 logs/
+# Fixed log-reader source; runtime journals remain excluded everywhere else.
+!/native_ops/logs/
+/native_ops/logs/*
+!/native_ops/logs/*.py
+!/native_ops/logs/*.service
 state/
 *.dump
 *.sql
@@ -87,6 +92,11 @@ inventory/services-observed-*.json
 inventory/*private*
 inventory/*actual*
 inventory/*live*
+inventory/knowledge-sources.json
+inventory/master-document-index.json
+inventory/center-document-index.json
+inventory/access-register.json
+inventory/application-register.json
 
 # Tool caches and generated files.
 .mypy_cache/
@@ -106,9 +116,3 @@ node_modules/
 # Environment files are private; this reviewed source file contains references only.
 *.env
 !orchestrator/config/orchestrator.env
-
-# Private knowledge and recovered infrastructure inventories.
-inventory/center-document-index.json
-inventory/knowledge-sources.json
-inventory/access-register.json
-inventory/application-register.json

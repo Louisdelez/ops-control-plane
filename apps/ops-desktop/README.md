@@ -1,7 +1,7 @@
 # Ops desktop
 
-Application Rust/Tauri avec cinq onglets permanents en haut : **Atlas**, **Zulip**,
-**OpenBao**, **Hermes**, **Terminaux**. Cliquer sur un onglet affiche sa vue web native.
+Application Rust/Tauri avec les onglets permanents **Atlas**, **Zulip**,
+**OpenBao**, **Hermes**, **Terminaux** et **Infrastructure** en haut. Cliquer sur un onglet affiche sa vue web native.
 Les vues natives restent ouvertes : changer d'onglet conserve la page, le
 formulaire et la session en cours, sans rechargement.
 
@@ -110,3 +110,26 @@ Le WebKitGTK 2.52.5 du poste recevait les événements de molette sans déplacer
 Un précédent de blocage de molette lié à cette propriété est documenté par WebKit : https://bugs.webkit.org/show_bug.cgi?id=245300 (ancien bug corrigé, pas une preuve que la version locale souffre exactement du même défaut). La correction présente repose sur la reproduction locale ci-dessus.
 
 La recette `tests/zulip_scroll.py` utilise de vrais événements de molette X11 via WebKit WebDriver : montée/descente, retour d’onglet, rechargement et zone imbriquée. Elle ne publie aucun message ; si nécessaire, le chemin privé `OPS_SCROLL_CREDENTIAL_FILE` fournit la connexion sans journaliser le mot de passe. `OPS_SCROLL_EVIDENCE` choisit le dossier des résultats.
+
+## Infrastructure (0.8.2)
+
+L’onglet **Infrastructure** fournit une synthèse et les détails des cinq machines,
+avec courbes CPU/RAM/réseau/E/S, barres de stockage inspirées de macOS, capteurs et processus filtrables.
+L’historique est permanent, sauvegardé et archivé ; les relevés peuvent être
+revus par date. Les 26 mesures avancées sont rendues dans la même page Infrastructure : catégories,
+inspection interactive, légendes statistiques, agrandissement et export CSV privé.
+La fenêtre Grafana de 0.8.0 a été retirée à la demande de Louis.
+Voir [la supervision professionnelle](../../docs/supervision-professionnelle.md).
+Voir [le guide du tableau de bord](../../docs/tableau-de-bord-infrastructure.md)
+pour les mesures, leur fraîcheur, la conservation et les limites explicites.
+La collecte continue lorsque la fenêtre est fermée. Aucun secret ni appel SSH
+n’est accessible depuis la vue web ; seule la projection locale est lisible.
+
+Dans **Infrastructure → Journaux**, récupération à la demande des journaux système,
+services et conteneurs des cinq machines, recherche, niveaux, archives permanentes
+et export JSONL privé. Limites et fonctionnement :
+[guide de supervision](../../docs/supervision-professionnelle.md#journaux-des-machines-services-et-conteneurs).
+
+Le design 0.8.2 ajoute un visuel original imagegen et des icônes Lucide embarquées
+dans Infrastructure, avec thèmes clair/sombre et adaptation aux fenêtres étroites.
+Voir [les sources du visuel et le prompt](ui/assets/ASSETS.md).

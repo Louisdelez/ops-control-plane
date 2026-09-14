@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-infrastructure-series"
+description = "Enables the infrastructure_series command without any pre-configured scope."
+commands.allow = ["infrastructure_series"]
+
+[[permission]]
+identifier = "deny-infrastructure-series"
+description = "Denies the infrastructure_series command without any pre-configured scope."
+commands.deny = ["infrastructure_series"]

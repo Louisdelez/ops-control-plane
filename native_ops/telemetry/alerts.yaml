@@ -1,0 +1,58 @@
+groups:
+  - name: ops-infrastructure
+    rules:
+      - alert: OpsMachineUnreachable
+        expr: ops_infra_up == 0
+        for: 2m
+        labels: {severity: critical, owner: infra-shared}
+        annotations: {summary: "Machine sans télémétrie depuis deux minutes"}
+      - alert: OpsCPUHigh
+        expr: ops_infra_cpu_usage_percent > 90
+        for: 10m
+        labels: {severity: warning, owner: infra-shared}
+        annotations: {summary: "CPU supérieur à 90 % pendant dix minutes"}
+      - alert: OpsMemoryPressure
+        expr: ops_infra_memory_available_bytes / ops_infra_memory_total_bytes < 0.1
+        for: 5m
+        labels: {severity: warning, owner: infra-shared}
+        annotations: {summary: "Moins de 10 % de mémoire disponible"}
+      - alert: OpsFilesystemLow
+        expr: ops_infra_filesystem_available_bytes / ops_infra_filesystem_total_bytes < 0.1
+        for: 5m
+        labels: {severity: warning, owner: infra-shared}
+        annotations: {summary: "Moins de 10 % d’espace disponible sur un volume"}
+      - alert: OpsFilesystemCritical
+        expr: ops_infra_filesystem_available_bytes / ops_infra_filesystem_total_bytes < 0.03
+        for: 2m
+        labels: {severity: critical, owner: infra-shared}
+        annotations: {summary: "Moins de 3 % d’espace disponible sur un volume"}
+      - alert: OpsFilesystemFilling
+        expr: predict_linear(ops_infra_filesystem_available_bytes[6h], 4*86400) < 0
+        for: 1h
+        labels: {severity: warning, owner: infra-shared}
+        annotations: {summary: "Tendance de remplissage : espace épuisé sous quatre jours si elle se poursuit"}
+      - alert: OpsInodesLow
+        expr: ops_infra_filesystem_inodes_free / ops_infra_filesystem_inodes_total < 0.05
+        for: 5m
+        labels: {severity: warning, owner: infra-shared}
+        annotations: {summary: "Moins de 5 % des inodes disponibles"}
+      - alert: OpsTelemetryStopped
+        expr: time() - ops_infra_collection_timestamp_seconds > 90 or absent(ops_infra_collection_timestamp_seconds)
+        for: 1m
+        labels: {severity: critical, owner: infra-shared}
+        annotations: {summary: "Collecte globale interrompue"}
+      - alert: OpsTelemetryBackupStale
+        expr: time() - ops_infra_backup_timestamp_seconds > 36*3600 or absent(ops_infra_backup_timestamp_seconds)
+        for: 10m
+        labels: {severity: critical, owner: backup-shared}
+        annotations: {summary: "Sauvegarde de télémétrie absente ou trop ancienne"}
+      - alert: OpsTelemetryArchiveSpaceLow
+        expr: ops_infra_archive_available_bytes < 20*1024*1024*1024
+        for: 5m
+        labels: {severity: critical, owner: backup-shared}
+        annotations: {summary: "Moins de 20 Gio pour l’archivage permanent : augmenter la capacité, aucune purge automatique"}
+      - alert: OpsTelemetryReplicationStale
+        expr: time() - ops_infra_replication_timestamp_seconds > 36*3600 or absent(ops_infra_replication_timestamp_seconds)
+        for: 10m
+        labels: {severity: critical, owner: backup-shared}
+        annotations: {summary: "Copies distantes de télémétrie absentes ou trop anciennes"}

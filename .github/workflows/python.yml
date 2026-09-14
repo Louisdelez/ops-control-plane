@@ -1,0 +1,28 @@
+name: Python checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y age
+          python -m pip install -e './broker[dev,mcp]' -e './memory[dev,mcp]' -e './orchestrator[dev,mcp]' -e './bridges/zulip[dev]' -e './provider-discovery[dev]' -e ./native_ops
+      - name: Run service and native contracts
+        run: |
+          python -m pytest broker/tests -q
+          python -m pytest memory/tests -q
+          python -m pytest orchestrator/tests -q
+          python -m pytest bridges/zulip/tests -q
+          python -m pytest provider-discovery/tests -q
+          python -m pytest native_ops/tests -q

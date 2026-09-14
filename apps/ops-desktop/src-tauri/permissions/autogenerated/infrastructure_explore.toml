@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-infrastructure-explore"
+description = "Enables the infrastructure_explore command without any pre-configured scope."
+commands.allow = ["infrastructure_explore"]
+
+[[permission]]
+identifier = "deny-infrastructure-explore"
+description = "Denies the infrastructure_explore command without any pre-configured scope."
+commands.deny = ["infrastructure_explore"]

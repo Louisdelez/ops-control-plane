@@ -1,0 +1,10 @@
+[Unit]
+Description=Project approved service observation into telemetry
+After=ops-telemetry.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/ops-telemetry/watch-projection.py
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/ops-telemetry /var/lib/ops-telemetry
+NoNewPrivileges=yes

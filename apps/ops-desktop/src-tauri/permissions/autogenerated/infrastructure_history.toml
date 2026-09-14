@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-infrastructure-history"
+description = "Enables the infrastructure_history command without any pre-configured scope."
+commands.allow = ["infrastructure_history"]
+
+[[permission]]
+identifier = "deny-infrastructure-history"
+description = "Denies the infrastructure_history command without any pre-configured scope."
+commands.deny = ["infrastructure_history"]

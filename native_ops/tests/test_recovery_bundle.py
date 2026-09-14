@@ -46,3 +46,19 @@ def test_backup_source_rejects_symlink_ancestors_and_stale_data(tmp_path):
 def test_corrupt_sqlite_is_rejected(tmp_path):
     path=tmp_path/'bad.db';path.write_bytes(b'not a database')
     with pytest.raises(Exception):bundle.sqlite_check(path)
+
+def test_restore_accepts_telemetry_without_relaxing_path_validation(tmp_path):
+    spec=importlib.util.spec_from_file_location('recovery_verify',Path(__file__).parents[1]/'deploy/verify-recovery-bundle.py')
+    verify=importlib.util.module_from_spec(spec);spec.loader.exec_module(verify)
+    archive=tmp_path/'bundle.tar'
+    def packed(extra):
+        with tarfile.open(archive,'w') as tar:
+            for name in sorted(verify.EXPECTED)+extra:
+                item=tarfile.TarInfo(name);item.size=1;tar.addfile(item,io.BytesIO(b'x'))
+    good='telemetry/logs-20260914T132000Z.sqlite3.age'
+    packed([good,good.removesuffix('.sqlite3.age')+'.json']);assert good in verify.bundle_members(archive)
+    for bad in ['telemetry/../../etc/shadow','telemetry/secret.env','telemetry/arbitrary.sqlite3.age']:
+        packed([bad])
+        with pytest.raises(ValueError):verify.bundle_members(archive)
+    packed([good,good])
+    with pytest.raises(ValueError):verify.bundle_members(archive)

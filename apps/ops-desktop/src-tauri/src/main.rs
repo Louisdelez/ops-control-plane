@@ -1,4 +1,6 @@
 mod keyring;
+mod infrastructure;
+mod approval_notifications;
 mod providers;
 mod terminals;
 use terminals::*;
@@ -9,7 +11,7 @@ use webkit2gtk::{WebViewExt, WebContextExt};
 use gtk::prelude::*;
 const ATLAS_COMMANDS: &[&str] = &["get_catalogue","get_runtime_snapshot","simulate_cost","preview_candidates","refresh_provider_finance","save_provider_credential","get_bootstrap_status","get_bootstrap_result"];
 const BAR: f64 = 56.;
-const SERVICES: [&str;9] = ["atlas", "zulip", "approvals", "openbao", "hermes", "terminals", "settings", "deepseek", "jina"];
+const SERVICES: [&str;10] = ["atlas", "infrastructure", "zulip", "approvals", "openbao", "hermes", "terminals", "settings", "deepseek", "jina"];
 fn destination(service: &str) -> Option<&'static str> {
     match service {
         "zulip" => Some("https://zulip.example.org/"),
@@ -114,6 +116,12 @@ fn main() {
                 return handler(invoke);
             }
             let view=invoke.message.webview();
+            if matches!(invoke.message.command(),"infrastructure_snapshot"|"infrastructure_series"|"infrastructure_export_series"|"infrastructure_history"|"infrastructure_logs"|"infrastructure_export_logs") {
+                if view.label()!="infrastructure" || !view.url().is_ok_and(|url|local_app(&url)) {invoke.resolver.reject("Commande réservée à Infrastructure");return true;}
+                let handler:Box<dyn Fn(tauri::ipc::Invoke)->bool>=Box::new(tauri::generate_handler![infrastructure::infrastructure_snapshot,infrastructure::infrastructure_series,infrastructure::infrastructure_export_series,infrastructure::infrastructure_history,infrastructure::infrastructure_logs,infrastructure::infrastructure_export_logs]);
+                return handler(invoke);
+            }
+
             if invoke.message.command().starts_with("settings_") {
                 if view.label()!="settings" || !view.url().is_ok_and(|url|local_app(&url)) {invoke.resolver.reject("Commande réservée aux paramètres locaux");return true;}
                 let handler: Box<dyn Fn(tauri::ipc::Invoke)->bool> = Box::new(tauri::generate_handler![settings_state,settings_enabled,settings_manage,settings_providers]);
@@ -159,6 +167,8 @@ fn main() {
             let atlas=WebviewBuilder::new("atlas",WebviewUrl::App("atlas/index.html".into()))
                 .data_directory(data_dir.clone()).on_navigation(local_app);
             window.add_child(atlas,LogicalPosition::new(0.,BAR),LogicalSize::new(1320.,860.-BAR))?;
+            let infrastructure=WebviewBuilder::new("infrastructure",WebviewUrl::App("infrastructure/index.html".into())).on_navigation(local_app);
+            window.add_child(infrastructure,LogicalPosition::new(0.,BAR),LogicalSize::new(1320.,860.-BAR))?;
             let terminal_view=WebviewBuilder::new("terminals",WebviewUrl::App("terminals/index.html".into())).on_navigation(local_app);
             window.add_child(terminal_view,LogicalPosition::new(0.,BAR),LogicalSize::new(1320.,860.-BAR))?;
             let settings=WebviewBuilder::new("settings",WebviewUrl::App("settings/index.html".into())).on_navigation(local_app);
@@ -196,7 +206,12 @@ fn main() {
                     else{open_external(url);false}
                 })
                 .on_new_window(|url,_|{open_external(&url);tauri::webview::NewWindowResponse::Deny});
-            window.add_child(approvals,LogicalPosition::new(0.,BAR),LogicalSize::new(1320.,860.-BAR))?.hide()?;
+            let approvals_view=window.add_child(approvals,LogicalPosition::new(0.,BAR),LogicalSize::new(1320.,860.-BAR))?;
+            approvals_view.hide()?;
+            let notification_app=app.handle().clone();
+            approvals_view.with_webview(move |native| {
+                approval_notifications::attach(&native.inner(),notification_app);
+            })?;
             for id in ["deepseek","jina"] {
                 // Provider pages have no IPC permissions and cannot navigate into local services.
                 let popup_app=app.handle().clone();

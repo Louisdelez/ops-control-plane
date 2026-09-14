@@ -1,0 +1,61 @@
+#!/usr/bin/python3 -I
+"""Install only the sealed forced-observation account after a broker class-C approval."""
+import hashlib,json,os,pwd,re,runpy,signal,stat,subprocess,sys,tempfile,time
+from pathlib import Path
+RESOURCES={'prod','nas','edge-vps','gamebox'}
+def protected(path,maximum=150000):
+ fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+ try:
+  st=os.fstat(fd)
+  if not stat.S_ISREG(st.st_mode) or st.st_uid!=0 or st.st_mode&0o022 or st.st_size>maximum:raise ValueError('Unsafe release member')
+  return os.read(fd,maximum+1)
+ finally:os.close(fd)
+def invoke(command,payload=None,timeout=30):
+ with tempfile.TemporaryFile() as output,tempfile.TemporaryFile() as errors:
+  p=subprocess.Popen(command,stdin=subprocess.PIPE if payload else subprocess.DEVNULL,stdout=output,stderr=errors,start_new_session=True)
+  try:
+   p.communicate(input=payload,timeout=timeout)
+   output.seek(0);errors.seek(0)
+   return p.returncode,output.read(16385),errors.read(8192)
+  except subprocess.TimeoutExpired:
+   os.killpg(p.pid,signal.SIGKILL);p.wait();raise RuntimeError('Transport timed out; review required')
+def main():
+ if os.geteuid()!=0 or len(sys.argv)!=3 or sys.argv[1] not in RESOURCES or not re.fullmatch('[a-f0-9]{64}',sys.argv[2]):raise ValueError('Invalid invocation')
+ resource,bundle=sys.argv[1:];base=Path('/var/lib/ops-logstream-releases')/bundle
+ raw=protected(base/'manifest.json');manifest=json.loads(raw)
+ if hashlib.sha256(raw).hexdigest()!=bundle:raise ValueError('Manifest mismatch')
+ members={}
+ for name,digest in manifest['files'].items():
+  if not re.fullmatch('[a-z.-]+',name):raise ValueError('Invalid member')
+  value=protected(base/name)
+  if hashlib.sha256(value).hexdigest()!=digest:raise ValueError('Release member mismatch')
+  members[name]=value
+ if hashlib.sha256(protected(Path(__file__))).hexdigest()!=manifest['helper_sha256']:raise ValueError('Helper mismatch')
+ subprocess.run(['/usr/bin/systemctl','start','ops-remote-admin-secrets.service'],stdin=subprocess.DEVNULL,capture_output=True,check=True,timeout=40)
+ runtime=Path('/run/ops-remote-admin/id_ed25519');uid=pwd.getpwnam('opsremoteadmin').pw_uid
+ for _ in range(30):
+  if runtime.exists():break
+  time.sleep(1)
+ st=runtime.lstat()
+ if st.st_uid!=uid or st.st_mode&0o077 or runtime.is_symlink():raise ValueError('Protected administrative identity unavailable')
+ transport=runpy.run_path(str(base/'transport.py'))
+ def command(alternate,remote):
+  args=transport['command'](resource,alternate)
+  args[2]='opsremoteadmin'
+  args=[x.replace('HOME=/home/ops-user','HOME=/var/lib/ops-remote-admin').replace('USER=ops-user','USER=opsremoteadmin').replace('LOGNAME=ops-user','LOGNAME=opsremoteadmin') for x in args]
+  args[-1]=remote;return args
+ alternate=False
+ code,_,error=invoke(command(False,'/usr/bin/true'))
+ if code and resource in {'prod','gamebox'} and any(token in error.lower() for token in [b'timed out',b'no route',b'unreachable',b'connection refused']):
+  alternate=True;code,_,_=invoke(command(True,'/usr/bin/true'))
+ if code:raise RuntimeError('Administrative transport unavailable')
+ import shlex
+ remote=('/usr/bin/python3 -I -c '+shlex.quote(members['docker.py'].decode())) if resource=='prod' else ('/usr/bin/sudo -n /usr/bin/python3 -I -c '+shlex.quote(members['install.py'].decode()))
+ code,output,_=invoke(command(alternate,remote),members[resource+'.json'],130)
+ if code or len(output)>16384:raise RuntimeError('Remote installation needs review')
+ result=json.loads(output)
+ if result.get('status') not in {'installed','already_installed'} or result.get('account')!='ops-observer':raise ValueError('Unexpected installation result')
+ print(json.dumps({'resource':resource,'bundle_sha256':bundle,**result}))
+if __name__=='__main__':
+ try:main()
+ except Exception as error:print(json.dumps({'status':'needs_review','category':type(error).__name__}));raise SystemExit(1)

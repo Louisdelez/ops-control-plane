@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily permanent telemetry backup
+[Timer]
+OnCalendar=*-*-* 01:10:00 UTC
+Persistent=true
+RandomizedDelaySec=60
+[Install]
+WantedBy=timers.target

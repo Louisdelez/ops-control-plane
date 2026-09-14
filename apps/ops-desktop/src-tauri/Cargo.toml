@@ -2,7 +2,7 @@
 license = "MIT"
 authors = ["LOUIS DELEZ"]
 name = "ops-desktop"
-version = "0.6.19"
+version = "0.8.3"
 edition = "2021"
 description = "Les interfaces natives Ops dans une application"
 [build-dependencies]

@@ -1,5 +1,5 @@
 use std::{fs,path::Path};
-const COMMANDS: &[&str]=&["get_native_budget","terminal_start","terminal_poll","terminal_write","terminal_resize","terminal_close","execution_status","execution_mode","open_service","reload_service","open_settings","settings_state","settings_enabled","settings_manage","settings_providers","provider_tabs","provider_browser","get_catalogue","get_runtime_snapshot","simulate_cost","preview_candidates","refresh_provider_finance","save_provider_credential","get_bootstrap_status","get_bootstrap_result"];
+const COMMANDS: &[&str]=&["infrastructure_logs","infrastructure_export_logs","infrastructure_history","infrastructure_series","infrastructure_export_series","infrastructure_snapshot","get_native_budget","terminal_start","terminal_poll","terminal_write","terminal_resize","terminal_close","execution_status","execution_mode","open_service","reload_service","open_settings","settings_state","settings_enabled","settings_manage","settings_providers","provider_tabs","provider_browser","get_catalogue","get_runtime_snapshot","simulate_cost","preview_candidates","refresh_provider_finance","save_provider_credential","get_bootstrap_status","get_bootstrap_result"];
 fn main() {
     let source=Path::new("../../model-manager/ui");
     let target=Path::new("../ui/atlas");

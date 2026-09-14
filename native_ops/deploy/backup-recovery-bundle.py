@@ -72,6 +72,24 @@ def sources():
         regular(path)
         if name.endswith(('.db', '.sqlite3')):
             sqlite_check(path)
+    # Telemetry is an append-only encrypted component. Include recent recovery
+    # points and sealed daily partitions in the already-approved daily transport.
+    telemetry = Path('/var/lib/ops-telemetry-backups')
+    if telemetry.exists():
+        status = json.loads((telemetry/'latest.json').read_text())
+        if not status.get('verified') or time.time()-status['checked_at']>36*3600:
+            raise ValueError('Telemetry backup is stale')
+        ledger_path=Path('/var/lib/ops-telemetry/replication-ledger.json')
+        ledger=json.loads(ledger_path.read_text()) if ledger_path.exists() else {}
+        for manifest in sorted(telemetry.glob('*.json')):
+            if manifest.name=='latest.json': continue
+            entry=json.loads(manifest.read_text())
+            if ledger.get(entry['file'],{}).get('sha256')==entry['sha256'] and time.time()-entry['created_at']>36*3600: continue
+            file=telemetry/entry['file'];regular(file)
+            if digest(file)!=entry['sha256']:raise ValueError('Telemetry ciphertext differs')
+            selected['telemetry/'+file.name]=file
+            selected['telemetry/'+manifest.name]=manifest
+        selected['telemetry/status.json']=telemetry/'latest.json'
     return selected
 
 

@@ -1,0 +1,7 @@
+[Unit]
+Description=Refresh projection of service observations
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-infrastructure-export-logs"
+description = "Enables the infrastructure_export_logs command without any pre-configured scope."
+commands.allow = ["infrastructure_export_logs"]
+
+[[permission]]
+identifier = "deny-infrastructure-export-logs"
+description = "Denies the infrastructure_export_logs command without any pre-configured scope."
+commands.deny = ["infrastructure_export_logs"]

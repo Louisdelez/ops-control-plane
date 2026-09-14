@@ -1,0 +1,1 @@
+{"identifier":"infrastructure","description":"Read-only local telemetry projection","webviews":["infrastructure"],"local":true,"permissions":["allow-infrastructure-snapshot","allow-infrastructure-series","allow-infrastructure-export-series","allow-infrastructure-history","allow-infrastructure-logs","allow-infrastructure-export-logs"]}

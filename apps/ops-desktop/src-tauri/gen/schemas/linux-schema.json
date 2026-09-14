@@ -219,6 +219,48 @@
           "markdownDescription": "Enables the get_runtime_snapshot command without any pre-configured scope."
         },
         {
+          "description": "Enables the infrastructure_explore command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-infrastructure-explore",
+          "markdownDescription": "Enables the infrastructure_explore command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the infrastructure_export_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-infrastructure-export-logs",
+          "markdownDescription": "Enables the infrastructure_export_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the infrastructure_export_series command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-infrastructure-export-series",
+          "markdownDescription": "Enables the infrastructure_export_series command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the infrastructure_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-infrastructure-history",
+          "markdownDescription": "Enables the infrastructure_history command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the infrastructure_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-infrastructure-logs",
+          "markdownDescription": "Enables the infrastructure_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the infrastructure_series command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-infrastructure-series",
+          "markdownDescription": "Enables the infrastructure_series command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the infrastructure_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-infrastructure-snapshot",
+          "markdownDescription": "Enables the infrastructure_snapshot command without any pre-configured scope."
+        },
+        {
           "description": "Enables the manage_keyring command without any pre-configured scope.",
           "type": "string",
           "const": "allow-manage-keyring",
@@ -373,6 +415,48 @@
           "type": "string",
           "const": "deny-get-runtime-snapshot",
           "markdownDescription": "Denies the get_runtime_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the infrastructure_explore command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-infrastructure-explore",
+          "markdownDescription": "Denies the infrastructure_explore command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the infrastructure_export_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-infrastructure-export-logs",
+          "markdownDescription": "Denies the infrastructure_export_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the infrastructure_export_series command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-infrastructure-export-series",
+          "markdownDescription": "Denies the infrastructure_export_series command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the infrastructure_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-infrastructure-history",
+          "markdownDescription": "Denies the infrastructure_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the infrastructure_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-infrastructure-logs",
+          "markdownDescription": "Denies the infrastructure_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the infrastructure_series command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-infrastructure-series",
+          "markdownDescription": "Denies the infrastructure_series command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the infrastructure_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-infrastructure-snapshot",
+          "markdownDescription": "Denies the infrastructure_snapshot command without any pre-configured scope."
         },
         {
           "description": "Denies the manage_keyring command without any pre-configured scope.",

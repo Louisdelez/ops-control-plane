@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-infrastructure-export-series"
+description = "Enables the infrastructure_export_series command without any pre-configured scope."
+commands.allow = ["infrastructure_export_series"]
+
+[[permission]]
+identifier = "deny-infrastructure-export-series"
+description = "Denies the infrastructure_export_series command without any pre-configured scope."
+commands.deny = ["infrastructure_export_series"]

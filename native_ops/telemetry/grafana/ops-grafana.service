@@ -1,0 +1,22 @@
+[Unit]
+Description=Ops Grafana infrastructure exploration
+After=network.target prometheus.service
+[Service]
+User=ops-grafana
+Group=ops-grafana
+ExecStart=/opt/ops-grafana/bin/grafana server --homepath=/opt/ops-grafana --config=/etc/ops-grafana/grafana.ini
+Restart=on-failure
+StateDirectory=ops-grafana
+LogsDirectory=ops-grafana
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+MemoryMax=768M
+TasksMax=512
+Environment=GOMAXPROCS=2
+UMask=0027
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+rule_files:
+  - alerts.yaml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'ops_infra_cpu_usage_percent{host="test"}'
+        values: '95+0x15'
+      - series: 'ops_infra_up{host="test"}'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: OpsCPUHigh
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: OpsCPUHigh
+        exp_alerts:
+          - exp_labels: {host: test, severity: warning, owner: infra-shared}
+            exp_annotations: {summary: "CPU supérieur à 90 % pendant dix minutes"}
+  - interval: 1m
+    input_series:
+      - series: 'ops_infra_up{host="test"}'
+        values: '0+0x5'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: OpsMachineUnreachable
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: OpsMachineUnreachable
+        exp_alerts:
+          - exp_labels: {host: test, severity: critical, owner: infra-shared}
+            exp_annotations: {summary: "Machine sans télémétrie depuis deux minutes"}

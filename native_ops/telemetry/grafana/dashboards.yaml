@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: Ops
+    folder: Infrastructure
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /etc/ops-grafana/dashboards

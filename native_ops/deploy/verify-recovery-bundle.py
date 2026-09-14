@@ -1,10 +1,23 @@
 """Restore the encrypted recovery bundle into disposable services, never live paths."""
 from pathlib import Path,PurePosixPath
-import hashlib,importlib.util,json,os,sqlite3,subprocess,sys,tarfile,tempfile,time,uuid
+import hashlib,importlib.util,json,os,re,sqlite3,subprocess,sys,tarfile,tempfile,time,uuid
 BASE=Path('/var/lib/ops-recovery-drills')
 SOURCE=Path('/home/ops-user/ops-control-plane')
 IDENTITY=Path('/home/ops-user/Documents/Recuperation-Ops-2026-09-11/PRIVE/cle-age.txt')
 EXPECTED={'pwa/session.key','pwa/webpush.pem','pwa/sessions.sqlite3','broker/state.db','clients/cli-pilot.sqlite3','clients/memory-sync.sqlite3','clients/workflows.sqlite3','memory/manifest.json','memory/memory.sqlite3','memory/qdrant.snapshot','native/approvals.sqlite3','native/manifest.json','native/pilot.sqlite3','openbao/manifest.json','openbao/snapshot.age','openbao/unseal-shares.age','zulip/bundle.tar.age'}
+
+def bundle_members(archive):
+    # The outer ciphertext digest authenticates the selected bundle. Only known
+    # component paths and bounded telemetry backup names may be extracted.
+    with tarfile.open(archive,'r:') as tar:
+        names=tar.getnames()
+    if len(names)!=len(set(names)) or len(names)>10000:raise ValueError('Duplicate or excessive members')
+    extra=set(names)-EXPECTED
+    pattern=r'telemetry/(?:history|logs|[0-9]{4}-[0-9]{2}-[0-9]{2})-(?:sealed|[0-9]{8}T[0-9]{6}Z)(?:\.sqlite3\.age|\.json)'
+    if not EXPECTED.issubset(names) or any(n!='telemetry/status.json' and not re.fullmatch(pattern,n) for n in extra):raise ValueError('Unexpected component scope')
+    for name in extra:
+        if name.endswith('.sqlite3.age') and name.removesuffix('.sqlite3.age')+'.json' not in extra:raise ValueError('Missing telemetry manifest')
+    return set(names)
 
 def extract(archive,target,expected):
     with tarfile.open(archive,'r:') as tar:
@@ -48,8 +61,16 @@ def main():
         with encrypted.open('rb') as f:assert hashlib.file_digest(f,'sha256').hexdigest()==meta['sha256']
         report['bundle_sha256']=meta['sha256']
         with tempfile.TemporaryDirectory(prefix='drill-',dir=BASE) as raw:
-            work=Path(raw);decrypt(encrypted,work/'bundle.tar');extract(work/'bundle.tar',work/'components',EXPECTED);parts=work/'components'
+            work=Path(raw);decrypt(encrypted,work/'bundle.tar');members=bundle_members(work/'bundle.tar');extract(work/'bundle.tar',work/'components',members);parts=work/'components'
             stage='sqlite';report['sqlite_tables']={name:sql_check(parts/name) for name in EXPECTED if name.endswith(('.db','.sqlite3'))}
+            stage='telemetry';report['telemetry']={'archives_verified':0,'tables':0}
+            for name in sorted(n for n in members-EXPECTED if n.endswith('.sqlite3.age')):
+                manifest=json.loads((parts/(name.removesuffix('.sqlite3.age')+'.json')).read_text())
+                ciphertext=parts/name
+                with ciphertext.open('rb') as incoming:digest=hashlib.file_digest(incoming,'sha256').hexdigest()
+                if manifest.get('file')!=Path(name).name or manifest.get('sha256')!=digest or manifest.get('bytes')!=ciphertext.stat().st_size:raise ValueError('Telemetry manifest mismatch')
+                temporary=work/'telemetry-check.sqlite3';decrypt(parts/name,temporary)
+                report['telemetry']['tables']+=sql_check(temporary);report['telemetry']['archives_verified']+=1;temporary.unlink()
             stage='qdrant'
             path=SOURCE/'memory/backup/ops_memory_backup.py';spec=importlib.util.spec_from_file_location('bundle_memory_restore',path);module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
             memory_id=json.loads((parts/'memory/manifest.json').read_text())['backup_id']

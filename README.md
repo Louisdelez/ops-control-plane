@@ -12,6 +12,7 @@ Ops Control Plane rassemble une application Rust/Tauri, un broker d’opération
 - **Mémoire persistante** : catalogue SQLite, index Qdrant, sources datées et passages de relais entre sessions.
 - **Routage IA** : sélection par rôle, plafonds d’appels et de coûts, catalogue et suivi des fournisseurs.
 - **Application de bureau** : Atlas, Zulip, OpenBao, Hermes et terminaux Codex/Claude Code dans une interface Tauri.
+- **Infrastructure native** : ressources de chaque machine, graphiques, disques, historique permanent et journaux avec archives paginées.
 - **Autorisations web** : pont Zulip et application installable avec prise en charge Web Push.
 - **Récupération** : outils de sauvegarde, restauration isolée et contrôle de continuité.
 
@@ -70,6 +71,10 @@ python -m pip install -e './broker[dev,mcp]' -e './memory[dev,mcp]' -e './orches
 Ces commandes préparent le développement Python. Elles n’installent ni services système, ni OpenBao, ni Zulip, ni l’application graphique. Le [guide de démarrage](docs/getting-started.md) décrit les prérequis et les tests.
 
 Les chemins `/home/ops-user`, domaines `example.org` et adresses de documentation sont des exemples. Les scripts de déploiement nécessitent une revue pour chaque installation.
+
+## Supervision native
+
+Ops 0.8.3 ajoute la collecte continue des journaux avec reprise, un état explicite des sources et des archives paginées. Les graphiques, icônes et illustrations sont embarqués dans Tauri. Voir le [guide des journaux](docs/supervision-journaux.md) et les [limites de livraison](docs/status.md).
 
 ## Documentation
 

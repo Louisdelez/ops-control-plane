@@ -1,0 +1,17 @@
+[Unit]
+Description=Encrypted permanent telemetry archive and isolated restore verification
+After=ops-telemetry.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/ops-telemetry/backup.py
+UMask=0077
+Nice=15
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+ReadWritePaths=/var/lib/ops-telemetry /var/lib/ops-telemetry-backups
+StateDirectory=ops-telemetry-backups
+StateDirectoryMode=0700
+MemoryMax=512M
+TimeoutStartSec=30min

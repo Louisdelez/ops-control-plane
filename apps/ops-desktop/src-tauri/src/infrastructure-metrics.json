@@ -1,0 +1,184 @@
+[
+  {
+    "id": 1,
+    "title": "Disponibilité des machines",
+    "unit": "bool",
+    "group": "cpu",
+    "expr": "ops_infra_up{host=~\"$machine\"}"
+  },
+  {
+    "id": 2,
+    "title": "Cœurs logiques disponibles",
+    "unit": "short",
+    "group": "cpu",
+    "expr": "ops_infra_cpu_cores{host=~\"$machine\"}"
+  },
+  {
+    "id": 3,
+    "title": "CPU · utilisation",
+    "unit": "percent",
+    "group": "cpu",
+    "expr": "ops_infra_cpu_usage_percent{host=~\"$machine\"}"
+  },
+  {
+    "id": 4,
+    "title": "RAM · utilisée / capacité",
+    "unit": "percent",
+    "group": "memory",
+    "expr": "100*ops_infra_memory_used_bytes{host=~\"$machine\"}/ops_infra_memory_total_bytes{host=~\"$machine\"}"
+  },
+  {
+    "id": 5,
+    "title": "CPU · par cœur",
+    "unit": "percent",
+    "group": "cpu",
+    "expr": "ops_infra_cpu_core_usage_percent{host=~\"$machine\"}"
+  },
+  {
+    "id": 6,
+    "title": "Charge système",
+    "unit": "short",
+    "group": "cpu",
+    "expr": "ops_infra_load{host=~\"$machine\"}"
+  },
+  {
+    "id": 7,
+    "title": "RAM disponible",
+    "unit": "bytes",
+    "group": "memory",
+    "expr": "ops_infra_memory_available_bytes{host=~\"$machine\"}"
+  },
+  {
+    "id": 8,
+    "title": "Swap utilisée",
+    "unit": "bytes",
+    "group": "memory",
+    "expr": "ops_infra_memory_swap_used_bytes{host=~\"$machine\"}"
+  },
+  {
+    "id": 9,
+    "title": "Volumes · espace utilisé",
+    "unit": "percent",
+    "group": "storage",
+    "expr": "100*ops_infra_filesystem_used_bytes{host=~\"$machine\"}/ops_infra_filesystem_total_bytes{host=~\"$machine\"}"
+  },
+  {
+    "id": 10,
+    "title": "Volumes · espace disponible",
+    "unit": "bytes",
+    "group": "storage",
+    "expr": "ops_infra_filesystem_available_bytes{host=~\"$machine\"}"
+  },
+  {
+    "id": 11,
+    "title": "Volumes · inodes utilisés",
+    "unit": "percent",
+    "group": "storage",
+    "expr": "100*(1-ops_infra_filesystem_inodes_free{host=~\"$machine\"}/ops_infra_filesystem_inodes_total{host=~\"$machine\"})"
+  },
+  {
+    "id": 12,
+    "title": "Stockage · croissance horaire",
+    "unit": "bytes",
+    "group": "storage",
+    "expr": "deriv(ops_infra_filesystem_used_bytes{host=~\"$machine\"}[1h])*3600"
+  },
+  {
+    "id": 13,
+    "title": "Réseau · réception",
+    "unit": "Bps",
+    "group": "network",
+    "expr": "ops_infra_network_rx_bytes_per_second{host=~\"$machine\"}"
+  },
+  {
+    "id": 14,
+    "title": "Réseau · émission",
+    "unit": "Bps",
+    "group": "network",
+    "expr": "ops_infra_network_tx_bytes_per_second{host=~\"$machine\"}"
+  },
+  {
+    "id": 15,
+    "title": "Réseau · erreurs reçues par seconde",
+    "unit": "ops",
+    "group": "network",
+    "expr": "rate(ops_infra_network_rx_errors{host=~\"$machine\"}[5m])"
+  },
+  {
+    "id": 16,
+    "title": "Réseau · paquets perdus par seconde",
+    "unit": "pps",
+    "group": "network",
+    "expr": "rate(ops_infra_network_rx_dropped{host=~\"$machine\"}[5m])"
+  },
+  {
+    "id": 17,
+    "title": "Disques · lecture",
+    "unit": "Bps",
+    "group": "storage",
+    "expr": "ops_infra_disk_read_bytes_per_second{host=~\"$machine\"}"
+  },
+  {
+    "id": 18,
+    "title": "Disques · écriture",
+    "unit": "Bps",
+    "group": "storage",
+    "expr": "ops_infra_disk_write_bytes_per_second{host=~\"$machine\"}"
+  },
+  {
+    "id": 19,
+    "title": "Disques · occupation E/S",
+    "unit": "percent",
+    "group": "storage",
+    "expr": "ops_infra_disk_busy_ms_per_second{host=~\"$machine\"}/10"
+  },
+  {
+    "id": 20,
+    "title": "Nombre de processus",
+    "unit": "short",
+    "group": "system",
+    "expr": "ops_infra_process_count{host=~\"$machine\"}"
+  },
+  {
+    "id": 21,
+    "title": "Températures",
+    "unit": "celsius",
+    "group": "sensors",
+    "expr": "ops_infra_temperature_celsius{host=~\"$machine\"}"
+  },
+  {
+    "id": 22,
+    "title": "Temps depuis démarrage",
+    "unit": "s",
+    "group": "system",
+    "expr": "ops_infra_uptime_seconds{host=~\"$machine\"}"
+  },
+  {
+    "id": 23,
+    "title": "GPU · utilisation",
+    "unit": "percent",
+    "group": "sensors",
+    "expr": "ops_infra_gpu_usage_pct{host=~\"$machine\"}"
+  },
+  {
+    "id": 24,
+    "title": "GPU · consommation mesurée",
+    "unit": "watt",
+    "group": "sensors",
+    "expr": "ops_infra_gpu_power_w{host=~\"$machine\"}"
+  },
+  {
+    "id": 25,
+    "title": "Alertes actives",
+    "unit": "short",
+    "group": "system",
+    "expr": "ALERTS{alertstate=\"firing\"}"
+  },
+  {
+    "id": 26,
+    "title": "Collecte · ancienneté",
+    "unit": "s",
+    "group": "system",
+    "expr": "time()-ops_infra_last_received_timestamp_seconds{host=~\"$machine\"}"
+  }
+]
