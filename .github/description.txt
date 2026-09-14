@@ -1,0 +1,1 @@
+Centre de pilotage Linux pour agents IA : Rust/Tauri, missions supervisées, mémoire SQLite/Qdrant, Zulip, OpenBao et routage de modèles avec budgets.

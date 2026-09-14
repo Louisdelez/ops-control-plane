@@ -1,0 +1,7 @@
+[Unit]
+Description=Shared resource limits for Ops native CLI sessions
+
+[Slice]
+MemoryMax=2500M
+TasksMax=384
+CPUQuota=150%

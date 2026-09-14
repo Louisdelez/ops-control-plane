@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-04T00:00:00Z",
+  "collector": "deterministic-read-only-collector",
+  "inventory_sha256": "replace-with-the-reviewed-inventory-sha256",
+  "resources": [
+    {
+      "id": "dell-control",
+      "reachable": true,
+      "services": [
+        {"id": "openbao.service", "state": "active"},
+        {"id": "ollama.service", "state": "active"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "production_model": null,
+  "automatic_promotion": false,
+  "fallback_when_unset": "deterministic_rules_then_api",
+  "hermes_runtime": {
+    "eligible": false,
+    "role": "advisory_candidate_only",
+    "minimum_context_tokens": 64000,
+    "qwen3_0_6b_declared_context_tokens": 40960,
+    "tested_context_tokens": 4096,
+    "reason": "below Hermes 0.21 minimum context and failed the real fail-closed benchmark"
+  },
+  "last_evaluation": {
+    "model": "qwen3:0.6b",
+    "report": "benchmarks/evidence/qwen3-0.6b-20260904.md",
+    "eligible": false,
+    "reason": "failed fail-closed, schema, behavior, thermal and observability gates"
+  }
+}

@@ -1,0 +1,4 @@
+d /var/lib/ops-memory 0700 opsmemory opsmemory -
+d /var/lib/ops-memory-qdrant 0700 root root -
+d /var/lib/ops-memory-qdrant/snapshots 0700 root root -
+d /run/ops-memory 0750 opsmemory ops-memory-api -

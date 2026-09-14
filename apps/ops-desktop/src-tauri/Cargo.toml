@@ -1,0 +1,26 @@
+[package]
+license = "MIT"
+authors = ["LOUIS DELEZ"]
+name = "ops-desktop"
+version = "0.6.19"
+edition = "2021"
+description = "Les interfaces natives Ops dans une application"
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+[dependencies]
+tauri = { version = "2", features = ["unstable"] }
+webkit2gtk = "2"
+gio = "0.18"
+gtk = "0.18"
+ops-model-manager = { path = "../../model-manager/src-tauri", features = ["native-desktop"] }
+portable-pty = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zeroize = "1"
+[profile.release]
+opt-level = "s"
+strip = true
+
+# RUSTSEC-2024-0429: upstream two-line fix backported for GTK3 compatibility.
+[patch.crates-io]
+glib = { path = "../vendor/glib-0.18.5" }

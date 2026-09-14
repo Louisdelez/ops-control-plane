@@ -1,0 +1,18 @@
+title = "Ops Control Plane publication checks"
+[extend]
+useDefault = true
+
+# Exact synthetic values used by unit tests; no directory-wide exclusion.
+[[allowlists]]
+description = "Reviewed synthetic test credentials"
+condition = "AND"
+paths = ['''^(tests/test_(hermes_secrets_env|zulip_openbao_launcher|control_plane_bootstrap)\.py|orchestrator/tests/test_provision_openbao\.py)$''']
+regexTarget = "secret"
+regexes = ['''^(zulip-api-key-0123456789|secret-0123456789abcdef|gw-0123456789abcdef|facade-0123456789abcdef|secret-identifier-12345|YS1zdHJvbmctcGFzc3dvcmQ=)$''']
+
+[[allowlists]]
+description = "Two xterm JavaScript export assignments, not credentials"
+condition = "AND"
+paths = ['''^apps/ops-desktop/ui/terminals/vendor/xterm\.js$''']
+regexTarget = "match"
+regexes = ['''^t\.FourKeyMap=t\.TwoKeyMap=void 0?\s*$''', '''^t\.SequencerByKey=t\.Sequencer=t\.Throttler=void 0?\s*$''']

@@ -1,0 +1,285 @@
+#!/usr/bin/python3
+"""Resolve the Qdrant API key from OpenBao into a root-only tmpfs file.
+
+The AppRole token is limited to two uses: the exact KV read and revoke-self.
+No output is committed until token revocation has succeeded.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import re
+import ssl
+import stat
+import sys
+import tempfile
+from typing import Any
+import urllib.error
+import urllib.request
+
+
+BAO_ORIGIN = "https://127.0.0.1:8200"
+CA_FILE = Path("/etc/ops-memory/openbao-ca.crt")
+KV_PATH = "/v1/kv-infra-shared/data/memory/qdrant"
+EXPECTED_OUTPUT = Path("/run/ops-memory-secrets/qdrant-api-key")
+EXPECTED_OUTPUT_OWNER = 0
+ROLE_ID_CREDENTIAL = "ops-memory-openbao-role-id"
+SECRET_ID_CREDENTIAL = "ops-memory-openbao-secret-id"
+MAX_RESPONSE_BYTES = 32 * 1024
+MAX_CREDENTIAL_BYTES = 512
+HTTP_TIMEOUT_SECONDS = 3.0
+
+_IDENTIFIER_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{15,127}\Z")
+_TOKEN_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._~-]{15,511}\Z")
+_QDRANT_KEY_RE = re.compile(r"\A[A-Za-z0-9_-]{32,512}\Z")
+
+
+class ResolutionError(RuntimeError):
+    pass
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(  # type: ignore[override]
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        raise ResolutionError("OpenBao redirected a local request.")
+
+
+def _validated(value: Any, pattern: re.Pattern[str], description: str) -> str:
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        raise ResolutionError(f"OpenBao returned an invalid {description}.")
+    return value
+
+
+def _validate_regular(path: Path, *, owner: int, private: bool) -> os.stat_result:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise ResolutionError("A required protected file is unavailable.") from exc
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != owner
+        or (private and stat.S_IMODE(info.st_mode) & 0o077)
+        or (not private and stat.S_IMODE(info.st_mode) & 0o022)
+    ):
+        raise ResolutionError("A required protected file is unsafe.")
+    return info
+
+
+def _read_private(path: Path, maximum: int) -> str:
+    before = _validate_regular(path, owner=0, private=True)
+    descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(descriptor)
+        if opened.st_dev != before.st_dev or opened.st_ino != before.st_ino:
+            raise ResolutionError("A credential changed while it was read.")
+        raw = os.read(descriptor, maximum + 1)
+        if len(raw) > maximum or os.read(descriptor, 1):
+            raise ResolutionError("A credential is oversized.")
+    finally:
+        os.close(descriptor)
+    try:
+        return raw.rstrip(b"\r\n").decode("ascii", errors="strict")
+    except UnicodeError as exc:
+        raise ResolutionError("A credential has an invalid encoding.") from exc
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    _validate_regular(CA_FILE, owner=0, private=False)
+    context = ssl.create_default_context(cafile=str(CA_FILE))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+        urllib.request.HTTPSHandler(context=context),
+    )
+
+
+def _request(
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    token: str | None = None,
+    expect_json: bool = True,
+) -> dict[str, Any] | None:
+    if method not in {"GET", "POST"} or not path.startswith("/v1/"):
+        raise ResolutionError("An internal OpenBao request was rejected.")
+    headers = {"Accept": "application/json", "User-Agent": "ops-memory-resolver/1"}
+    body = None
+    if payload is not None or method == "POST":
+        body = json.dumps(payload or {}, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if token is not None:
+        headers["X-Vault-Token"] = _validated(token, _TOKEN_RE, "token")
+    request = urllib.request.Request(
+        BAO_ORIGIN + path, data=body, headers=headers, method=method
+    )
+    try:
+        with _opener().open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            allowed = {200} if expect_json else {200, 204}
+            if response.status not in allowed:
+                raise ResolutionError("OpenBao rejected the request.")
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except (OSError, ssl.SSLError, urllib.error.URLError) as exc:
+        raise ResolutionError("The local OpenBao request failed.") from exc
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ResolutionError("OpenBao returned an oversized response.")
+    if not expect_json:
+        return None
+    try:
+        result = json.loads(raw)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ResolutionError("OpenBao returned invalid JSON.") from exc
+    if not isinstance(result, dict):
+        raise ResolutionError("OpenBao returned an invalid document.")
+    return result
+
+
+def _extract_key(document: dict[str, Any]) -> str:
+    outer = document.get("data")
+    inner = outer.get("data") if isinstance(outer, dict) else None
+    if not isinstance(inner, dict):
+        raise ResolutionError("The Qdrant KV object is missing.")
+    return _validated(inner.get("api_key"), _QDRANT_KEY_RE, "Qdrant key")
+
+
+def _remove_output(output: Path) -> None:
+    try:
+        info = output.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ResolutionError("The previous runtime secret is inaccessible.") from exc
+    if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != 0:
+        raise ResolutionError("The previous runtime secret is unsafe.")
+    output.unlink()
+
+
+def _write_key(key: str, output: Path) -> None:
+    if output != EXPECTED_OUTPUT or output.parent.is_symlink():
+        raise ResolutionError("The runtime secret output path is unsafe.")
+    try:
+        parent = output.parent.lstat()
+    except OSError as exc:
+        raise ResolutionError("The runtime secret directory is unavailable.") from exc
+    if (
+        not stat.S_ISDIR(parent.st_mode)
+        or parent.st_uid != EXPECTED_OUTPUT_OWNER
+        or stat.S_IMODE(parent.st_mode) & 0o077
+    ):
+        raise ResolutionError("The runtime secret directory is unsafe.")
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".qdrant-api-key.", dir=output.parent)
+    try:
+        os.fchmod(descriptor, 0o400)
+        encoded = (key + "\n").encode("ascii")
+        written = 0
+        while written < len(encoded):
+            written += os.write(descriptor, encoded[written:])
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(temporary_name, output)
+        directory_fd = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+
+
+def resolve(output: Path = EXPECTED_OUTPUT) -> None:
+    if os.geteuid() != 0:
+        raise ResolutionError("The resolver must run as root.")
+    credential_directory = os.environ.get("CREDENTIALS_DIRECTORY", "")
+    if not credential_directory or not os.path.isabs(credential_directory):
+        raise ResolutionError("The systemd credential directory is unavailable.")
+    credential_root = Path(credential_directory)
+    role_id = _validated(
+        _read_private(credential_root / ROLE_ID_CREDENTIAL, MAX_CREDENTIAL_BYTES),
+        _IDENTIFIER_RE,
+        "RoleID",
+    )
+    secret_id = _validated(
+        _read_private(credential_root / SECRET_ID_CREDENTIAL, MAX_CREDENTIAL_BYTES),
+        _IDENTIFIER_RE,
+        "SecretID",
+    )
+    _remove_output(output)
+
+    runtime_token: str | None = None
+    qdrant_key: str | None = None
+    operation_error: BaseException | None = None
+    revocation_error: BaseException | None = None
+    try:
+        login = _request(
+            "POST",
+            "/v1/auth/approle/login",
+            payload={"role_id": role_id, "secret_id": secret_id},
+        )
+        role_id = secret_id = ""
+        auth = login.get("auth") if isinstance(login, dict) else None
+        if not isinstance(auth, dict):
+            raise ResolutionError("The memory AppRole login failed.")
+        runtime_token = _validated(auth.get("client_token"), _TOKEN_RE, "token")
+        document = _request("GET", KV_PATH, token=runtime_token)
+        if not isinstance(document, dict):
+            raise ResolutionError("The memory AppRole read failed.")
+        qdrant_key = _extract_key(document)
+        document.clear()
+    except BaseException as exc:
+        operation_error = exc
+    finally:
+        if runtime_token is not None:
+            try:
+                _request(
+                    "POST",
+                    "/v1/auth/token/revoke-self",
+                    token=runtime_token,
+                    expect_json=False,
+                )
+            except BaseException as exc:
+                revocation_error = exc
+            runtime_token = None
+
+    if operation_error is not None or revocation_error is not None or qdrant_key is None:
+        qdrant_key = None
+        _remove_output(output)
+        if isinstance(operation_error, ResolutionError):
+            raise operation_error
+        if revocation_error is not None:
+            raise ResolutionError("The AppRole token revocation could not be confirmed.")
+        raise ResolutionError("The Qdrant key resolution failed.") from operation_error
+
+    # This is deliberately after the successful revoke-self call above.
+    _write_key(qdrant_key, output)
+    qdrant_key = None
+
+
+def main() -> int:
+    try:
+        resolve()
+    except (OSError, ResolutionError, ValueError) as exc:
+        print(f"ops-memory-openbao-resolve: {exc}", file=sys.stderr)
+        return 1
+    print("ops-memory-openbao-resolve: Qdrant credential published in protected tmpfs")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

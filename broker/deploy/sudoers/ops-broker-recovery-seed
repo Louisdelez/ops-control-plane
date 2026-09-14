@@ -1,0 +1,3 @@
+# Approval remains enforced by the broker Class C action before execution.
+Cmnd_Alias OPS_RECOVERY_SEED = /usr/local/libexec/ops-runbooks/recovery-seed-copy nas, /usr/local/libexec/ops-runbooks/recovery-seed-copy edge-vps
+opsbroker ALL=(root) NOPASSWD: OPS_RECOVERY_SEED

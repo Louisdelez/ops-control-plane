@@ -1,0 +1,17 @@
+[Unit]
+Description=Copy verified encrypted recovery bundle to approved destination %i
+After=network-online.target ops-recovery-bundle.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/ops-runbooks/periodic-recovery-copy %i
+TimeoutStartSec=5min
+UMask=0077
+Nice=15
+MemoryMax=300M
+TasksMax=64
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=/var/lib/ops-periodic-recovery

@@ -1,0 +1,324 @@
+CATALOGUE API IA — LLM / RAISONNEMENT / CODE
+Mise à jour : 5 septembre 2026
+
+PÉRIMÈTRE
+- Chine
+- États-Unis / Amérique du Nord
+- Europe : uniquement Mistral
+- API/cloud uniquement
+- Exclus : image, vidéo, audio/voix, 3D et modèles purement locaux
+
+BASE DE COMPARAISON
+Simulation mensuelle identique :
+- 10 millions de tokens en entrée
+- 2 millions de tokens en sortie
+- USD, hors taxes
+- coût = 10 × prix entrée par million + 2 × prix sortie par million
+- prix standard temps réel, sans cache/batch sauf mention
+- les prix peuvent varier selon région, longueur de contexte, cache, batch ou promotions.
+
+============================================================
+CLASSEMENT APPROXIMATIF — DU MOINS CHER AU PLUS CHER
+============================================================
+
+Qwen 3.7 Flash — Alibaba / Chine
+Prix : $0.028/M entrée + $0.110/M sortie (palier <=32K, Global)
+Simulation : ≈ $0.50/mois
+Point fort : énorme volume à coût minuscule, tâches courantes, extraction, routage et automatisations simples.
+
+Qwen 3.5 Flash — Alibaba / Chine
+Prix : ≈ $0.029/M entrée + $0.287/M sortie
+Simulation : ≈ $0.86/mois
+Point fort : traitement massif très économique, classification et tâches répétitives.
+
+GLM-4.7 FlashX — Z.ai/Zhipu / Chine
+Simulation discutée : ≈ $1.50/mois
+Point fort : automatisations et tâches à gros volume avec coût très faible.
+Note : tarif exact à revalider au branchement de l'API.
+
+Qwen 3.8 Flash — Alibaba / Chine
+Prix : $0.113/M entrée + $0.382/M sortie
+Simulation : ≈ $1.89/mois
+Point fort : Flash récent, très bon compromis vitesse/coût pour usage général et agentique.
+
+Qwen 3.5 Plus — Alibaba / Chine
+Prix : $0.115/M entrée + $0.688/M sortie (palier <=128K, Global)
+Simulation : ≈ $2.53/mois
+Point fort : généraliste économique nettement plus capable qu'un petit Flash.
+
+Mistral Small — Mistral AI / France
+Prix de référence discuté : ≈ $0.15/M entrée + $0.60/M sortie
+Simulation : ≈ $2.70/mois
+Point fort : généraliste économique, code et automatisation avec excellent rapport capacité/prix.
+
+Qwen3 32B — Alibaba / Chine
+Prix : $0.16/M entrée + $0.64/M sortie
+Simulation : ≈ $2.88/mois
+Point fort : généraliste compact, bon équilibre raisonnement/coût/vitesse.
+
+DeepSeek V4 Flash — DeepSeek / Chine — heures creuses
+Prix : $0.22/M entrée + $0.66/M sortie
+Simulation : ≈ $3.52/mois
+Point fort : raisonnement/code général à très faible coût, contexte 1M et tool calling.
+
+Qwen3 30B-A3B Instruct — Alibaba / Chine
+Prix : $0.20/M entrée + $0.80/M sortie
+Simulation : ≈ $3.60/mois
+Point fort : MoE compact pour tâches générales et automatisations économiques.
+
+Qwen3-Next 80B-A3B Instruct — Alibaba / Chine
+Prix : $0.15/M entrée + $1.20/M sortie
+Simulation : ≈ $3.90/mois
+Point fort : excellent rendement MoE, généraliste rapide et peu coûteux.
+
+Qwen3-Next 80B-A3B Thinking — Alibaba / Chine
+Prix : $0.15/M entrée + $1.20/M sortie
+Simulation : ≈ $3.90/mois
+Point fort : raisonnement économique avec très peu de paramètres actifs à chaque token.
+
+Qwen3 235B-A22B Instruct — Alibaba / Chine
+Prix : $0.23/M entrée + $0.92/M sortie
+Simulation : ≈ $4.14/mois
+Point fort : gros MoE très rentable pour instructions complexes et raisonnement général.
+
+Qwen 3.7 Plus — Alibaba / Chine
+Prix : $0.276/M entrée + $1.101/M sortie (palier <=256K, Global)
+Simulation : ≈ $4.96/mois
+Point fort : généraliste/raisonnement robuste sans coût de flagship.
+
+MiniMax M3 — MiniMax / Chine
+Simulation discutée : ≈ $5.40/mois
+Point fort : agents longue durée, nombreux appels d'outils, recherche et workflows ; très bon ratio capacité/prix.
+Note : tarif exact à revalider au branchement.
+
+Gemini 3.1 Flash-Lite — Google / États-Unis
+Prix : $0.25/M entrée + $1.50/M sortie
+Simulation : ≈ $5.50/mois
+Point fort : gros volumes, automatisations et tâches générales économiques avec contexte 1M.
+
+Qwen 3.6 Plus — Alibaba / Chine
+Prix : $0.276/M entrée + $1.651/M sortie (palier <=256K)
+Simulation : ≈ $6.06/mois
+Point fort : généraliste solide avec raisonnement, bon niveau intermédiaire.
+
+Qwen3-Coder-Next — Alibaba / Chine
+Prix : $0.30/M entrée + $1.50/M sortie (palier <=32K)
+Simulation : ≈ $6.00/mois
+Point fort : développement logiciel et agents de code à tarif agressif.
+
+Qwen3 30B-A3B Thinking — Alibaba / Chine
+Prix : $0.20/M entrée + $2.40/M sortie
+Simulation : ≈ $6.80/mois
+Point fort : raisonnement approfondi avec architecture MoE économique.
+
+Qwen3 235B-A22B Thinking — Alibaba / Chine
+Prix : $0.23/M entrée + $2.30/M sortie
+Simulation : ≈ $6.90/mois
+Point fort : raisonnement complexe à coût faible pour sa taille.
+
+DeepSeek V4 Flash — DeepSeek / Chine — heures pleines
+Prix : $0.44/M entrée + $1.32/M sortie
+Simulation : ≈ $7.04/mois
+Point fort : même V4 Flash, toujours très compétitif même au tarif de pointe.
+
+Cohere Aya Expanse 8B/32B — Cohere / Canada
+Prix : $0.50/M entrée + $1.50/M sortie
+Simulation : ≈ $8.00/mois
+Point fort : multilingue ouvert et applications internationales économiques.
+
+Mistral Large — Mistral AI / France
+Prix public : $0.50/M entrée + $1.50/M sortie
+Simulation : ≈ $8.00/mois
+Point fort : généraliste européen puissant pour raisonnement, code et travail professionnel.
+
+Qwen3-Coder 30B-A3B Instruct — Alibaba / Chine
+Prix : $0.45/M entrée + $2.25/M sortie (palier <=32K)
+Simulation : ≈ $9.00/mois
+Point fort : code spécialisé et tâches agentiques avec MoE efficace.
+
+GLM-4.7 — Z.ai/Zhipu / Chine
+Simulation discutée : ≈ $10.40/mois
+Point fort : généraliste/raisonnement intermédiaire, compromis entre Flash et flagship.
+Note : tarif exact à revalider au branchement.
+
+DeepSeek V4 Pro — DeepSeek / Chine — heures creuses
+Prix : $0.66/M entrée + $1.98/M sortie
+Simulation : ≈ $10.56/mois
+Point fort : raisonnement, code et agents complexes ; niveau supérieur à V4 Flash.
+
+Kimi K2.x — Moonshot AI / Chine
+Prix de référence discuté : ≈ $0.60/M entrée + $2.50/M sortie
+Simulation : ≈ $11.00/mois
+Point fort : code, raisonnement long, agents et tâches complexes ; excellente alternative premium chinoise.
+Note : vérifier la version Kimi exacte lors de l'intégration.
+
+Gemini 3 Flash — Google / États-Unis
+Prix : $0.50/M entrée + $3.00/M sortie
+Simulation : ≈ $11.00/mois
+Point fort : vitesse, agents, raisonnement et très grand contexte.
+
+Hunyuan HY4 / famille Hunyuan — Tencent / Chine
+Simulation discutée : ≈ $13/mois
+Point fort : gros MoE pour agents, code, raisonnement complexe et très long contexte.
+Note : tarif exact à revalider selon endpoint Tencent.
+
+Grok Build 0.1 — xAI / États-Unis
+Prix : $1.00/M entrée + $2.00/M sortie (contexte court)
+Simulation : ≈ $14.00/mois
+Point fort : construction logicielle et workflows de développement.
+
+Gemini 3.7 Flash — Google / États-Unis
+Prix promotionnel 2026 : $0.75/M entrée + $3.75/M sortie
+Simulation : ≈ $15.00/mois
+Point fort : workflows agentiques et raisonnement multimodal à vitesse Flash.
+
+GLM-5 — Z.ai/Zhipu / Chine
+Simulation discutée : ≈ $16.40/mois
+Point fort : raisonnement avancé, code et agents complexes.
+Note : tarif exact à revalider au branchement.
+
+GPT-5.4 Mini — OpenAI / États-Unis
+Prix : $0.75/M entrée + $4.50/M sortie
+Simulation : ≈ $16.50/mois
+Point fort : travail général/professionnel avec capacités élevées à coût inférieur au flagship.
+
+Doubao / Seed 2.1 Pro — ByteDance / Chine
+Simulation discutée : ≈ $17/mois
+Point fort : raisonnement multimodal/spatial et agents ; compétitif sur plusieurs tâches complexes.
+Note : tarif exact à revalider selon Volcano Engine/endpoint.
+
+Grok 4.20 — xAI / États-Unis
+Prix : $1.25/M entrée + $2.50/M sortie (<200K)
+Simulation : ≈ $17.50/mois
+Point fort : tool calling, agents, contexte 1M, suivi strict des instructions et raisonnement.
+
+Grok 4.20 Reasoning — xAI / États-Unis
+Prix : $1.25/M entrée + $2.50/M sortie (<200K)
+Simulation : ≈ $17.50/mois
+Point fort : raisonnement et agents outillés avec très grand contexte.
+
+Grok 4.20 Multi-Agent — xAI / États-Unis
+Prix : $1.25/M entrée + $2.50/M sortie (<200K)
+Simulation : ≈ $17.50/mois
+Point fort : recherche profonde avec plusieurs agents travaillant en parallèle.
+
+DeepSeek V4 Pro — DeepSeek / Chine — heures pleines
+Prix : $1.32/M entrée + $3.96/M sortie
+Simulation : ≈ $21.12/mois
+Point fort : flagship DeepSeek pour code, agents et raisonnement difficile.
+
+GLM-5.1 — Z.ai/Zhipu / Chine
+Simulation discutée : ≈ $22.80/mois
+Point fort : haut de gamme GLM pour raisonnement et tâches agentiques exigeantes.
+Note : tarif exact à revalider au branchement.
+
+Qwen 3.7 Max — Alibaba / Chine
+Prix : $1.65/M entrée + $4.951/M sortie
+Simulation : ≈ $26.40/mois
+Point fort : flagship Qwen, long contexte, raisonnement et tâches complexes.
+
+Qwen 3.8 Max — Alibaba / Chine
+Prix : $1.65/M entrée + $4.951/M sortie
+Simulation : ≈ $26.40/mois
+Point fort : génération flagship Qwen récente pour raisonnement/agents/tâches difficiles.
+
+Qwen3-Coder 480B-A35B Instruct — Alibaba / Chine
+Prix : $1.50/M entrée + $7.50/M sortie (palier <=32K)
+Simulation : ≈ $30.00/mois
+Point fort : gros modèle de code, édition de dépôts et ingénierie logicielle complexe.
+
+Grok 4.6 — xAI / États-Unis
+Prix : $2.00/M entrée + $6.00/M sortie (<200K)
+Simulation : ≈ $32.00/mois
+Point fort : généraliste xAI haut de gamme pour raisonnement et agents.
+
+Claude Sonnet 5 — Anthropic / États-Unis
+Prix : $2/M entrée + $10/M sortie
+Simulation : ≈ $40.00/mois
+Point fort : code, agents, raisonnement et tâches complexes de niveau flagship.
+
+Gemini 3.1 Pro — Google / États-Unis
+Prix : $2/M entrée + $12/M sortie (prompts <=200K)
+Simulation : ≈ $44.00/mois
+Point fort : raisonnement complexe, multimodal, agents et vibe-coding.
+
+Cohere Command A — Cohere / Canada
+Prix : $2.50/M entrée + $10/M sortie
+Simulation : ≈ $45.00/mois
+Point fort : RAG, agents entreprise, tool use, SQL, multilingue et grands corpus documentaires.
+
+GPT-5.3 Codex — OpenAI / États-Unis
+Prix : $1.75/M entrée + $14/M sortie
+Simulation : ≈ $45.50/mois
+Point fort : coding agentique, modification de dépôts, debugging et ingénierie logicielle autonome.
+
+GPT-5.4 — OpenAI / États-Unis
+Prix : $2.50/M entrée + $15/M sortie
+Simulation : ≈ $55.00/mois
+Point fort : travail professionnel complexe, raisonnement et code généraliste flagship.
+
+Kimi K3 — Moonshot AI / Chine
+Simulation discutée dans la conversation : ≈ $60/mois
+Point fort : flagship Kimi orienté raisonnement, code et agents.
+Note : tarif exact à revalider sur la grille Moonshot au moment de l'intégration.
+
+GPT-5.4 Pro — OpenAI / États-Unis
+Prix : $30/M entrée + $180/M sortie
+Simulation : ≈ $660.00/mois
+Point fort : problèmes extrêmement difficiles où la qualité maximale prime largement sur le coût.
+
+============================================================
+MODÈLES/FAMILLES API À TARIF NON DIRECTEMENT COMPARABLE
+============================================================
+
+Cohere Command A+ — Cohere / Canada
+Prix : gratuit jusqu'aux limites de clé ; production via Model Vault, pas de prix token public directement comparable.
+Point fort : agents d'entreprise, raisonnement, multilingue, citations et forte efficacité d'inférence.
+
+NVIDIA Nemotron — NVIDIA / États-Unis
+Prix : dépend de la variante Nemotron et de l'endpoint/fournisseur.
+Point fort : moteur d'agents, raisonnement, code, tool use et spécialisation/fine-tuning efficace.
+
+Amazon Nova — Amazon/AWS / États-Unis
+Prix : dépend fortement de la variante Nova et du service AWS.
+Point fort : intégration AWS, entreprise et variantes économiques pour gros volumes.
+
+Meta Llama — Meta / États-Unis
+Prix : aucun tarif API Meta universel ; dépend du fournisseur cloud.
+Point fort : immense écosystème, flexibilité, fine-tuning et disponibilité chez de nombreux fournisseurs.
+
+Microsoft Phi — Microsoft / États-Unis
+Prix : dépend de la variante et de l'endpoint Azure/partenaire.
+Point fort : petits modèles efficaces et workloads où taille, latence et coût comptent.
+
+Xiaomi MiMo — Xiaomi / Chine
+Prix : dépend de la variante/endpoint.
+Point fort : raisonnement efficace et bon ratio capacité/calcul.
+
+Baidu ERNIE — Baidu / Chine
+Prix : variable selon version et Baidu Cloud.
+Point fort : généraliste chinois, compréhension du chinois et intégration entreprise.
+
+Baichuan — Baichuan Intelligence / Chine
+Prix : variable selon endpoint.
+Point fort : généraliste chinois et usages entreprise.
+
+Step / StepFun — StepFun / Chine
+Prix : variable selon modèle.
+Point fort : long contexte, raisonnement et modèles généralistes.
+
+Mistral Medium — Mistral AI / France
+Prix : dépend de la génération/version active.
+Point fort : modèle Mistral recommandé pour la majorité des tâches et du coding, entre Small et Large.
+
+============================================================
+NOTES
+============================================================
+
+- Ce fichier est un catalogue de routage/prix, pas un classement absolu d'intelligence.
+- Les coûts simulés supposent exactement 10M tokens d'entrée + 2M tokens de sortie par mois.
+- Cache, batch, promotions, région et longueur du contexte peuvent modifier fortement le coût réel.
+- Pour Qwen, les prix changent selon la longueur de chaque requête ; le premier palier est utilisé quand indiqué.
+- DeepSeek a une tarification heures creuses/heures pleines ; les deux coûts sont donc séparés.
+- Les familles sans tarif API public unique sont volontairement marquées « variable » plutôt que d'inventer un prix.
+- Certains chiffres évoqués oralement plus tôt dans la conversation étaient approximatifs ; les tarifs officiels vérifiables ont été privilégiés ici.

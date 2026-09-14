@@ -1,0 +1,2966 @@
+{
+  "schema_version": 2,
+  "revision": "catalogue-api-ia-2026-09-05.3",
+  "generated_at": "2026-09-05T00:00:00+02:00",
+  "source": {
+    "label": "catalogue_modeles_IA_API_2026.txt",
+    "sha256": "179dabf94c731541e929fe57845fedff79f249af058f483fcc4146d9c8b0d62e",
+    "updated_on": "2026-09-05",
+    "entry_count": 59,
+    "priced_entry_count": 49,
+    "variable_entry_count": 10,
+    "provider_label_count": 21,
+    "scope": "API/cloud text, reasoning and code models; no image, video, audio, 3D or local-only models"
+  },
+  "normalization": {
+    "card_count": 58,
+    "priced_card_count": 48,
+    "quarantined_family_count": 11,
+    "operations": [
+      {
+        "kind": "merge_price_schedules",
+        "source_lines": [
+          59,
+          119
+        ],
+        "card_id": "deepseek-v4-flash"
+      },
+      {
+        "kind": "merge_price_schedules",
+        "source_lines": [
+          144,
+          205
+        ],
+        "card_id": "deepseek-v4-pro"
+      },
+      {
+        "kind": "split_models",
+        "source_lines": [
+          124
+        ],
+        "card_ids": [
+          "cohere-aya-expanse-8b",
+          "cohere-aya-expanse-32b"
+        ]
+      },
+      {
+        "kind": "quarantine_external_retirement",
+        "source_lines": [],
+        "card_id": "cohere-aya-expanse-8b",
+        "note": "External status only: Cohere retirement effective 2026-04-04 is documented by the separately verified Cohere deprecations source in provider-integrations.v1.json; the TXT price remains historical catalogue data"
+      },
+      {
+        "kind": "sort_correction",
+        "source_lines": [
+          99,
+          104
+        ],
+        "note": "Qwen3-Coder-Next $6.00 precedes Qwen 3.6 Plus $6.06"
+      }
+    ]
+  },
+  "comparison_profile": {
+    "id": "monthly-reference-v1",
+    "calls": 1000,
+    "input_tokens_per_call": 10000,
+    "output_tokens_per_call": 2000,
+    "input_tokens_total": 10000000,
+    "output_tokens_total": 2000000,
+    "cache_hit_percent": 0,
+    "batch": false,
+    "currency": "USD",
+    "taxes_included": false,
+    "price_policy": "highest_reference_cost_across_all_schedules",
+    "note": "Per-call sizes are fixed so context-dependent price tiers are comparable; the highest applicable schedule is the conservative default and every variant remains visible."
+  },
+  "capability_dimensions": [
+    "general",
+    "reasoning",
+    "code",
+    "math",
+    "research",
+    "tools",
+    "agentic",
+    "instructions",
+    "reliability",
+    "factuality",
+    "speed",
+    "multilingual"
+  ],
+  "capability_profiles": {
+    "utility_flash": {
+      "general": 6,
+      "reasoning": 4,
+      "code": 5,
+      "math": 4,
+      "research": 4,
+      "tools": 6,
+      "agentic": 6,
+      "instructions": 6,
+      "reliability": 6,
+      "factuality": 5,
+      "speed": 10,
+      "multilingual": 7
+    },
+    "balanced_economy": {
+      "general": 7,
+      "reasoning": 6,
+      "code": 6,
+      "math": 6,
+      "research": 5,
+      "tools": 7,
+      "agentic": 7,
+      "instructions": 7,
+      "reliability": 7,
+      "factuality": 6,
+      "speed": 8,
+      "multilingual": 7
+    },
+    "reasoning_economy": {
+      "general": 7,
+      "reasoning": 8,
+      "code": 7,
+      "math": 8,
+      "research": 6,
+      "tools": 7,
+      "agentic": 7,
+      "instructions": 7,
+      "reliability": 7,
+      "factuality": 7,
+      "speed": 6,
+      "multilingual": 7
+    },
+    "coder_economy": {
+      "general": 6,
+      "reasoning": 7,
+      "code": 9,
+      "math": 7,
+      "research": 5,
+      "tools": 8,
+      "agentic": 8,
+      "instructions": 8,
+      "reliability": 7,
+      "factuality": 6,
+      "speed": 7,
+      "multilingual": 6
+    },
+    "agentic_economy": {
+      "general": 7,
+      "reasoning": 7,
+      "code": 7,
+      "math": 6,
+      "research": 7,
+      "tools": 9,
+      "agentic": 9,
+      "instructions": 8,
+      "reliability": 7,
+      "factuality": 7,
+      "speed": 7,
+      "multilingual": 7
+    },
+    "multilingual": {
+      "general": 7,
+      "reasoning": 6,
+      "code": 5,
+      "math": 5,
+      "research": 6,
+      "tools": 6,
+      "agentic": 5,
+      "instructions": 7,
+      "reliability": 7,
+      "factuality": 7,
+      "speed": 7,
+      "multilingual": 10
+    },
+    "advanced_general": {
+      "general": 9,
+      "reasoning": 8,
+      "code": 8,
+      "math": 8,
+      "research": 8,
+      "tools": 8,
+      "agentic": 8,
+      "instructions": 9,
+      "reliability": 8,
+      "factuality": 8,
+      "speed": 6,
+      "multilingual": 8
+    },
+    "advanced_reasoning": {
+      "general": 8,
+      "reasoning": 9,
+      "code": 8,
+      "math": 9,
+      "research": 8,
+      "tools": 8,
+      "agentic": 8,
+      "instructions": 9,
+      "reliability": 8,
+      "factuality": 8,
+      "speed": 5,
+      "multilingual": 8
+    },
+    "advanced_coder": {
+      "general": 8,
+      "reasoning": 9,
+      "code": 10,
+      "math": 8,
+      "research": 7,
+      "tools": 9,
+      "agentic": 10,
+      "instructions": 9,
+      "reliability": 8,
+      "factuality": 7,
+      "speed": 5,
+      "multilingual": 7
+    },
+    "enterprise_rag": {
+      "general": 8,
+      "reasoning": 8,
+      "code": 7,
+      "math": 7,
+      "research": 9,
+      "tools": 9,
+      "agentic": 9,
+      "instructions": 9,
+      "reliability": 9,
+      "factuality": 9,
+      "speed": 6,
+      "multilingual": 9
+    },
+    "premium_frontier": {
+      "general": 10,
+      "reasoning": 10,
+      "code": 9,
+      "math": 9,
+      "research": 9,
+      "tools": 9,
+      "agentic": 9,
+      "instructions": 10,
+      "reliability": 9,
+      "factuality": 9,
+      "speed": 4,
+      "multilingual": 9
+    },
+    "exceptional": {
+      "general": 10,
+      "reasoning": 10,
+      "code": 10,
+      "math": 10,
+      "research": 10,
+      "tools": 9,
+      "agentic": 9,
+      "instructions": 10,
+      "reliability": 9,
+      "factuality": 9,
+      "speed": 2,
+      "multilingual": 9
+    },
+    "unknown_family": {
+      "general": 5,
+      "reasoning": 5,
+      "code": 5,
+      "math": 5,
+      "research": 5,
+      "tools": 5,
+      "agentic": 5,
+      "instructions": 5,
+      "reliability": 5,
+      "factuality": 5,
+      "speed": 5,
+      "multilingual": 5
+    }
+  },
+  "capability_provenance": {
+    "kind": "editorial_seed",
+    "confidence": "low",
+    "sample_count": 0,
+    "warning": "Initial 0-10 scores are routing priors inferred from the supplied descriptions, not benchmark facts. Observed results must be stored separately."
+  },
+  "model_id_provenance": {
+    "qwen-3-5-flash": {"exact_model_id": "qwen3.5-flash", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "qwen-3-8-flash": {"exact_model_id": "qwen3.8-flash", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-responses", "verified_on": "2026-09-05"},
+    "qwen-3-5-plus": {"exact_model_id": "qwen3.5-plus", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "qwen3-32b": {"exact_model_id": "qwen3-32b", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "qwen3-30b-a3b-instruct": {"exact_model_id": "qwen3-30b-a3b-instruct-2507", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "qwen3-next-80b-a3b-instruct": {"exact_model_id": "qwen3-next-80b-a3b-instruct", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "qwen3-next-80b-a3b-thinking": {"exact_model_id": "qwen3-next-80b-a3b-thinking", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "qwen3-235b-a22b-instruct": {"exact_model_id": "qwen3-235b-a22b-instruct-2507", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "qwen3-coder-next": {"exact_model_id": "qwen3-coder-next", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "qwen-3-6-plus": {"exact_model_id": "qwen3.6-plus", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "qwen3-30b-a3b-thinking": {"exact_model_id": "qwen3-30b-a3b-thinking-2507", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "qwen3-235b-a22b-thinking": {"exact_model_id": "qwen3-235b-a22b-thinking-2507", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "qwen3-coder-30b-a3b-instruct": {"exact_model_id": "qwen3-coder-30b-a3b-instruct", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "qwen-3-7-max": {"exact_model_id": "qwen3.7-max", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "qwen3-coder-480b-a35b-instruct": {"exact_model_id": "qwen3-coder-480b-a35b-instruct", "confidence": "official_verified", "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing", "verified_on": "2026-09-05"},
+    "glm-4-7-flashx": {"exact_model_id": "glm-4.7-flashx", "confidence": "official_verified", "source": "https://docs.z.ai/api-reference/llm/chat-completion", "verified_on": "2026-09-05"},
+    "glm-4-7": {"exact_model_id": "glm-4.7", "confidence": "official_verified", "source": "https://docs.z.ai/api-reference/llm/chat-completion", "verified_on": "2026-09-05"},
+    "glm-5": {"exact_model_id": "glm-5", "confidence": "official_verified", "source": "https://docs.z.ai/api-reference/llm/chat-completion", "verified_on": "2026-09-05"},
+    "glm-5-1": {"exact_model_id": "glm-5.1", "confidence": "official_verified", "source": "https://docs.z.ai/api-reference/llm/chat-completion", "verified_on": "2026-09-05"},
+    "mistral-small": {"exact_model_id": "mistral-small-latest", "confidence": "official_verified", "source": "https://docs.mistral.ai/api/", "verified_on": "2026-09-05"},
+    "mistral-large": {"exact_model_id": "mistral-large-latest", "confidence": "official_verified", "source": "https://docs.mistral.ai/api/", "verified_on": "2026-09-05"},
+    "hunyuan-hy4-family": {"exact_model_id": "hy4-preview", "confidence": "official_verified", "source": "https://cloud.tencent.com/document/product/1823/130051", "verified_on": "2026-09-05"},
+    "minimax-m3": {"exact_model_id": "MiniMax-M3", "confidence": "official_verified", "source": "https://platform.minimax.io/docs/api-reference/models/openai/list-models", "verified_on": "2026-09-05"},
+    "gemini-3-1-flash-lite": {"exact_model_id": "gemini-3.1-flash-lite", "confidence": "official_verified", "source": "https://ai.google.dev/gemini-api/docs/models", "verified_on": "2026-09-05"},
+    "gemini-3-7-flash": {"exact_model_id": "gemini-3.7-flash", "confidence": "official_verified", "source": "https://ai.google.dev/gemini-api/docs/models", "verified_on": "2026-09-05"},
+    "cohere-aya-expanse-32b": {"exact_model_id": "c4ai-aya-expanse-32b", "confidence": "official_verified", "source": "https://docs.cohere.com/reference/list-models", "verified_on": "2026-09-05"},
+    "cohere-command-a": {"exact_model_id": "command-a-03-2025", "confidence": "official_verified", "source": "https://docs.cohere.com/reference/list-models", "verified_on": "2026-09-05"},
+    "grok-build-0-1": {"exact_model_id": "grok-build-0.1", "confidence": "official_verified", "source": "https://docs.x.ai/developers/models", "verified_on": "2026-09-05"},
+    "grok-4-20": {"exact_model_id": "grok-4.20", "confidence": "official_verified", "source": "https://docs.x.ai/developers/models", "verified_on": "2026-09-05"},
+    "grok-4-20-reasoning": {"exact_model_id": "grok-4.20-reasoning", "confidence": "official_verified", "source": "https://docs.x.ai/developers/models", "verified_on": "2026-09-05"},
+    "grok-4-20-multi-agent": {"exact_model_id": "grok-4.20-multi-agent", "confidence": "official_verified", "source": "https://docs.x.ai/developers/models", "verified_on": "2026-09-05"},
+    "grok-4-6": {"exact_model_id": "grok-4.6", "confidence": "official_verified", "source": "https://docs.x.ai/developers/models", "verified_on": "2026-09-05"},
+    "gpt-5-4-mini": {"exact_model_id": "gpt-5.4-mini", "confidence": "official_verified", "source": "https://developers.openai.com/api/docs/models/gpt-5.4-mini", "verified_on": "2026-09-05"},
+    "gpt-5-3-codex": {"exact_model_id": "gpt-5.3-codex", "confidence": "official_verified", "source": "https://developers.openai.com/api/docs/models/gpt-5.3-codex", "verified_on": "2026-09-05"},
+    "gpt-5-4": {"exact_model_id": "gpt-5.4", "confidence": "official_verified", "source": "https://developers.openai.com/api/docs/models/gpt-5.4", "verified_on": "2026-09-05"},
+    "gpt-5-4-pro": {"exact_model_id": "gpt-5.4-pro", "confidence": "official_verified", "source": "https://developers.openai.com/api/docs/models/gpt-5.4-pro", "verified_on": "2026-09-05"},
+    "claude-sonnet-5": {"exact_model_id": "claude-sonnet-5", "confidence": "official_verified", "source": "https://docs.anthropic.com/en/docs/about-claude/models/overview", "verified_on": "2026-09-05"},
+    "kimi-k3": {"exact_model_id": "kimi-k3", "confidence": "official_verified", "source": "https://platform.kimi.ai/docs/api/list-models", "verified_on": "2026-09-05"}
+  },
+  "provider_accounts": [
+    {
+      "id": "alibaba",
+      "name": "Alibaba Cloud Model Studio",
+      "country": "Chine",
+      "credential_ref": "kv-infra-shared/data/llm/qwen",
+      "balance_mode": "verified_balance",
+      "financial_capabilities": {
+        "cash_balance": "cloud_billing_api",
+        "plan_quota": "unknown",
+        "usage": "cloud_billing_api",
+        "cost": "cloud_billing_api",
+        "rate_limits": "console_only",
+        "spending_limit": "unknown"
+      }
+    },
+    {
+      "id": "z-ai",
+      "name": "Z.ai / Zhipu",
+      "country": "Chine",
+      "credential_ref": "kv-infra-shared/data/llm/providers/z-ai",
+      "balance_mode": "unknown",
+      "financial_capabilities": {
+        "cash_balance": "console_only",
+        "plan_quota": "console_only",
+        "usage": "console_only",
+        "cost": "console_only",
+        "rate_limits": "console_only",
+        "spending_limit": "console_only"
+      }
+    },
+    {
+      "id": "mistral-ai",
+      "name": "Mistral AI",
+      "country": "France",
+      "credential_ref": "kv-infra-shared/data/llm/providers/mistral-ai",
+      "balance_mode": "unknown",
+      "financial_capabilities": {
+        "cash_balance": "console_only",
+        "plan_quota": "not_applicable",
+        "usage": "admin_api",
+        "cost": "admin_api",
+        "rate_limits": "admin_api",
+        "spending_limit": "admin_api"
+      }
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "country": "Chine",
+      "credential_ref": "kv-infra-shared/data/llm/deepseek",
+      "balance_mode": "verified_balance",
+      "financial_capabilities": {
+        "cash_balance": "direct_api",
+        "plan_quota": "not_applicable",
+        "usage": "unknown",
+        "cost": "unknown",
+        "rate_limits": "unknown",
+        "spending_limit": "unknown"
+      }
+    },
+    {
+      "id": "minimax",
+      "name": "MiniMax",
+      "country": "Chine",
+      "credential_ref": "kv-infra-shared/data/llm/providers/minimax",
+      "balance_mode": "quota_only",
+      "financial_capabilities": {
+        "cash_balance": "console_only",
+        "plan_quota": "direct_api",
+        "usage": "console_only",
+        "cost": "console_only",
+        "rate_limits": "console_only",
+        "spending_limit": "console_only"
+      }
+    },
+    {
+      "id": "google",
+      "name": "Google",
+      "country": "États-Unis",
+      "credential_ref": "kv-infra-shared/data/llm/providers/google",
+      "balance_mode": "quota_only",
+      "financial_capabilities": {
+        "cash_balance": "not_applicable",
+        "plan_quota": "not_applicable",
+        "usage": "cloud_billing_api",
+        "cost": "cloud_billing_api",
+        "rate_limits": "cloud_billing_api",
+        "spending_limit": "cloud_billing_api"
+      }
+    },
+    {
+      "id": "cohere",
+      "name": "Cohere",
+      "country": "Canada",
+      "credential_ref": "kv-infra-shared/data/llm/providers/cohere",
+      "balance_mode": "unknown",
+      "financial_capabilities": {
+        "cash_balance": "console_only",
+        "plan_quota": "unknown",
+        "usage": "console_only",
+        "cost": "console_only",
+        "rate_limits": "console_only",
+        "spending_limit": "console_only"
+      }
+    },
+    {
+      "id": "moonshot",
+      "name": "Moonshot AI",
+      "country": "Chine",
+      "credential_ref": "kv-infra-shared/data/llm/providers/moonshot",
+      "balance_mode": "verified_balance",
+      "financial_capabilities": {
+        "cash_balance": "direct_api",
+        "plan_quota": "not_applicable",
+        "usage": "console_only",
+        "cost": "console_only",
+        "rate_limits": "console_only",
+        "spending_limit": "unknown"
+      }
+    },
+    {
+      "id": "tencent",
+      "name": "Tencent Cloud TokenHub",
+      "country": "Chine",
+      "credential_ref": "kv-infra-shared/data/llm/providers/tencent",
+      "balance_mode": "quota_only",
+      "financial_capabilities": {
+        "cash_balance": "unknown",
+        "plan_quota": "admin_api",
+        "usage": "admin_api",
+        "cost": "cloud_billing_api",
+        "rate_limits": "admin_api",
+        "spending_limit": "admin_api"
+      }
+    },
+    {
+      "id": "xai",
+      "name": "xAI",
+      "country": "États-Unis",
+      "credential_ref": "kv-infra-shared/data/llm/providers/xai",
+      "balance_mode": "verified_balance",
+      "financial_capabilities": {
+        "cash_balance": "admin_api",
+        "plan_quota": "not_applicable",
+        "usage": "admin_api",
+        "cost": "admin_api",
+        "rate_limits": "admin_api",
+        "spending_limit": "admin_api"
+      }
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "country": "États-Unis",
+      "credential_ref": "kv-infra-shared/data/llm/providers/openai",
+      "balance_mode": "unknown",
+      "financial_capabilities": {
+        "cash_balance": "console_only",
+        "plan_quota": "not_applicable",
+        "usage": "admin_api",
+        "cost": "admin_api",
+        "rate_limits": "admin_api",
+        "spending_limit": "console_only"
+      }
+    },
+    {
+      "id": "bytedance",
+      "name": "ByteDance / Volcengine Ark",
+      "country": "Chine",
+      "credential_ref": "kv-infra-shared/data/llm/providers/bytedance",
+      "balance_mode": "verified_balance",
+      "financial_capabilities": {
+        "cash_balance": "cloud_billing_api",
+        "plan_quota": "unknown",
+        "usage": "admin_api",
+        "cost": "cloud_billing_api",
+        "rate_limits": "admin_api",
+        "spending_limit": "unknown"
+      }
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "country": "États-Unis",
+      "credential_ref": "kv-infra-shared/data/llm/providers/anthropic",
+      "balance_mode": "unknown",
+      "financial_capabilities": {
+        "cash_balance": "console_only",
+        "plan_quota": "not_applicable",
+        "usage": "admin_api",
+        "cost": "admin_api",
+        "rate_limits": "admin_api",
+        "spending_limit": "console_only"
+      }
+    },
+    {
+      "id": "nvidia",
+      "name": "NVIDIA",
+      "country": "États-Unis",
+      "credential_ref": "kv-infra-shared/data/llm/providers/nvidia",
+      "balance_mode": "unknown",
+      "financial_capabilities": {
+        "cash_balance": "console_only",
+        "plan_quota": "unknown",
+        "usage": "console_only",
+        "cost": "console_only",
+        "rate_limits": "console_only",
+        "spending_limit": "unknown"
+      }
+    },
+    {
+      "id": "aws",
+      "name": "Amazon Web Services",
+      "country": "États-Unis",
+      "credential_ref": "kv-infra-shared/data/llm/providers/aws",
+      "balance_mode": "quota_only",
+      "financial_capabilities": {
+        "cash_balance": "not_applicable",
+        "plan_quota": "not_applicable",
+        "usage": "cloud_billing_api",
+        "cost": "cloud_billing_api",
+        "rate_limits": "cloud_billing_api",
+        "spending_limit": "cloud_billing_api"
+      }
+    },
+    {
+      "id": "meta",
+      "name": "Meta",
+      "country": "États-Unis",
+      "credential_ref": "kv-infra-shared/data/llm/providers/meta",
+      "balance_mode": "provider_dependent",
+      "financial_capabilities": {
+        "cash_balance": "unknown",
+        "plan_quota": "unknown",
+        "usage": "unknown",
+        "cost": "unknown",
+        "rate_limits": "unknown",
+        "spending_limit": "unknown"
+      }
+    },
+    {
+      "id": "microsoft",
+      "name": "Microsoft Azure Foundry",
+      "country": "États-Unis",
+      "credential_ref": "kv-infra-shared/data/llm/providers/microsoft",
+      "balance_mode": "quota_only",
+      "financial_capabilities": {
+        "cash_balance": "not_applicable",
+        "plan_quota": "not_applicable",
+        "usage": "cloud_billing_api",
+        "cost": "cloud_billing_api",
+        "rate_limits": "cloud_billing_api",
+        "spending_limit": "cloud_billing_api"
+      }
+    },
+    {
+      "id": "xiaomi",
+      "name": "Xiaomi MiMo",
+      "country": "Chine",
+      "credential_ref": "kv-infra-shared/data/llm/providers/xiaomi",
+      "balance_mode": "unknown",
+      "financial_capabilities": {
+        "cash_balance": "console_only",
+        "plan_quota": "console_only",
+        "usage": "console_only",
+        "cost": "console_only",
+        "rate_limits": "console_only",
+        "spending_limit": "unknown"
+      }
+    },
+    {
+      "id": "baidu",
+      "name": "Baidu Qianfan",
+      "country": "Chine",
+      "credential_ref": "kv-infra-shared/data/llm/providers/baidu",
+      "balance_mode": "unknown",
+      "financial_capabilities": {
+        "cash_balance": "unknown",
+        "plan_quota": "unknown",
+        "usage": "console_only",
+        "cost": "console_only",
+        "rate_limits": "console_only",
+        "spending_limit": "unknown"
+      }
+    },
+    {
+      "id": "baichuan",
+      "name": "Baichuan Intelligence",
+      "country": "Chine",
+      "credential_ref": "kv-infra-shared/data/llm/providers/baichuan",
+      "balance_mode": "unknown",
+      "financial_capabilities": {
+        "cash_balance": "console_only",
+        "plan_quota": "unknown",
+        "usage": "console_only",
+        "cost": "console_only",
+        "rate_limits": "console_only",
+        "spending_limit": "unknown"
+      }
+    },
+    {
+      "id": "stepfun",
+      "name": "StepFun",
+      "country": "Chine",
+      "credential_ref": "kv-infra-shared/data/llm/providers/stepfun",
+      "balance_mode": "verified_balance",
+      "financial_capabilities": {
+        "cash_balance": "direct_api",
+        "plan_quota": "unknown",
+        "usage": "console_only",
+        "cost": "console_only",
+        "rate_limits": "console_only",
+        "spending_limit": "unknown"
+      }
+    }
+  ],
+  "cards": [
+    {
+      "card_id": "qwen-3-7-flash",
+      "display_name": "Qwen 3.7 Flash",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Très grand volume à coût minimal pour tâches courantes, extraction, routage et automatisations simples.",
+      "profile": "utility_flash",
+      "specialties": [
+        "volume",
+        "extraction",
+        "classification",
+        "routing"
+      ],
+      "integration_stage": "configured",
+      "deployment_ids": [
+        "qwen-utility-api"
+      ],
+      "exact_model_id": "qwen3.7-flash-2026-07-15",
+      "source_lines": [
+        24
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "Global <=32K",
+          "input_usd_per_million": "0.028",
+          "output_usd_per_million": "0.110",
+          "declared_simulation_usd": "0.50",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen-3-5-flash",
+      "display_name": "Qwen 3.5 Flash",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Traitement massif très économique pour classification et tâches répétitives.",
+      "profile": "utility_flash",
+      "specialties": [
+        "volume",
+        "classification",
+        "automation"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3.5-flash",
+      "source_lines": [
+        29
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.029",
+          "output_usd_per_million": "0.287",
+          "declared_simulation_usd": "0.86",
+          "confidence": "approximate",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "glm-4-7-flashx",
+      "display_name": "GLM-4.7 FlashX",
+      "entity_kind": "model",
+      "provider_account_id": "z-ai",
+      "developer": "Z.ai / Zhipu",
+      "country": "Chine",
+      "description": "Automatisations et gros volumes avec une estimation de coût très faible.",
+      "profile": "utility_flash",
+      "specialties": [
+        "volume",
+        "automation"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "glm-4.7-flashx",
+      "source_lines": [
+        34
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.07",
+          "output_usd_per_million": "0.40",
+          "declared_simulation_usd": "1.50",
+          "confidence": "official_verified",
+          "cached_input_usd_per_million": "0.01",
+          "source": "https://docs.z.ai/guides/overview/pricing"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarification officielle à revalider si Z.ai modifie sa grille."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen-3-8-flash",
+      "display_name": "Qwen 3.8 Flash",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Compromis récent entre vitesse et coût pour usages généraux et agentiques.",
+      "profile": "agentic_economy",
+      "specialties": [
+        "speed",
+        "general",
+        "agents"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3.8-flash",
+      "source_lines": [
+        39
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.113",
+          "output_usd_per_million": "0.382",
+          "declared_simulation_usd": "1.89",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen-3-5-plus",
+      "display_name": "Qwen 3.5 Plus",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Généraliste économique plus capable qu'un petit modèle Flash.",
+      "profile": "balanced_economy",
+      "specialties": [
+        "general",
+        "analysis"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3.5-plus",
+      "source_lines": [
+        44
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "Global <=128K",
+          "input_usd_per_million": "0.115",
+          "output_usd_per_million": "0.688",
+          "declared_simulation_usd": "2.53",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "mistral-small",
+      "display_name": "Mistral Small",
+      "entity_kind": "unresolved",
+      "provider_account_id": "mistral-ai",
+      "developer": "Mistral AI",
+      "country": "France",
+      "description": "Généraliste européen économique pour code et automatisation.",
+      "profile": "balanced_economy",
+      "specialties": [
+        "general",
+        "code",
+        "automation",
+        "europe"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "mistral-small-latest",
+      "source_lines": [
+        49
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.15",
+          "output_usd_per_million": "0.60",
+          "declared_simulation_usd": "2.70",
+          "confidence": "discussed_reference",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "L'alias latest est officiel mais mouvant; l'identite du modele servi doit etre journalisee a chaque appel."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen3-32b",
+      "display_name": "Qwen3 32B",
+      "entity_kind": "unresolved",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Généraliste compact équilibrant raisonnement, coût et vitesse.",
+      "profile": "balanced_economy",
+      "specialties": [
+        "general",
+        "reasoning"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3-32b",
+      "source_lines": [
+        54
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.16",
+          "output_usd_per_million": "0.64",
+          "declared_simulation_usd": "2.88",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "deepseek-v4-flash",
+      "display_name": "DeepSeek V4 Flash",
+      "entity_kind": "model",
+      "provider_account_id": "deepseek",
+      "developer": "DeepSeek",
+      "country": "Chine",
+      "description": "Raisonnement et code général à faible coût, avec long contexte et appels d'outils déclarés.",
+      "profile": "reasoning_economy",
+      "specialties": [
+        "reasoning",
+        "code",
+        "long-context",
+        "tools"
+      ],
+      "integration_stage": "configured",
+      "deployment_ids": [
+        "alibaba-deepseek-ops-api",
+        "deepseek-ops-api"
+      ],
+      "exact_model_id": "deepseek-v4-flash",
+      "source_lines": [
+        59,
+        119
+      ],
+      "pricing": [
+        {
+          "mode": "off_peak",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.22",
+          "output_usd_per_million": "0.66",
+          "declared_simulation_usd": "3.52",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        },
+        {
+          "mode": "peak",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.44",
+          "output_usd_per_million": "1.32",
+          "declared_simulation_usd": "7.04",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": 1000000,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen3-30b-a3b-instruct",
+      "display_name": "Qwen3 30B-A3B Instruct",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "MoE compact pour tâches générales et automatisations économiques.",
+      "profile": "balanced_economy",
+      "specialties": [
+        "general",
+        "automation",
+        "moe"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3-30b-a3b-instruct-2507",
+      "source_lines": [
+        64
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.20",
+          "output_usd_per_million": "0.80",
+          "declared_simulation_usd": "3.60",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen3-next-80b-a3b-instruct",
+      "display_name": "Qwen3-Next 80B-A3B Instruct",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "MoE généraliste rapide avec un excellent rendement coût/capacité.",
+      "profile": "balanced_economy",
+      "specialties": [
+        "general",
+        "speed",
+        "moe"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3-next-80b-a3b-instruct",
+      "source_lines": [
+        69
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.15",
+          "output_usd_per_million": "1.20",
+          "declared_simulation_usd": "3.90",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen3-next-80b-a3b-thinking",
+      "display_name": "Qwen3-Next 80B-A3B Thinking",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Raisonnement économique avec peu de paramètres actifs par token.",
+      "profile": "reasoning_economy",
+      "specialties": [
+        "reasoning",
+        "moe"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3-next-80b-a3b-thinking",
+      "source_lines": [
+        74
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.15",
+          "output_usd_per_million": "1.20",
+          "declared_simulation_usd": "3.90",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen3-235b-a22b-instruct",
+      "display_name": "Qwen3 235B-A22B Instruct",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Grand MoE rentable pour instructions complexes et raisonnement général.",
+      "profile": "balanced_economy",
+      "specialties": [
+        "instructions",
+        "reasoning",
+        "moe"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3-235b-a22b-instruct-2507",
+      "source_lines": [
+        79
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.23",
+          "output_usd_per_million": "0.92",
+          "declared_simulation_usd": "4.14",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen-3-7-plus",
+      "display_name": "Qwen 3.7 Plus",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Généraliste robuste pour analyse et raisonnement sans coût de flagship.",
+      "profile": "balanced_economy",
+      "specialties": [
+        "general",
+        "reasoning"
+      ],
+      "integration_stage": "configured",
+      "deployment_ids": [
+        "qwen-ops-api"
+      ],
+      "exact_model_id": "qwen3.7-plus-2026-05-26",
+      "source_lines": [
+        84
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "Global <=256K",
+          "input_usd_per_million": "0.276",
+          "output_usd_per_million": "1.101",
+          "declared_simulation_usd": "4.96",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "minimax-m3",
+      "display_name": "MiniMax M3",
+      "entity_kind": "model",
+      "provider_account_id": "minimax",
+      "developer": "MiniMax",
+      "country": "Chine",
+      "description": "Agents longue durée, nombreux appels d'outils, recherche et workflows.",
+      "profile": "agentic_economy",
+      "specialties": [
+        "agents",
+        "tools",
+        "research",
+        "long-running"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "MiniMax-M3",
+      "source_lines": [
+        89
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.30",
+          "output_usd_per_million": "1.20",
+          "declared_simulation_usd": "5.40",
+          "confidence": "official_verified",
+          "cached_input_usd_per_million": "0.06",
+          "source": "https://platform.minimax.io/subscribe/token-plan?tab=api-enterprise"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarif permanent remisé valable jusqu'a 512K tokens; au-dela, la carte doit etre revalidee."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "gemini-3-1-flash-lite",
+      "display_name": "Gemini 3.1 Flash-Lite",
+      "entity_kind": "model",
+      "provider_account_id": "google",
+      "developer": "Google",
+      "country": "États-Unis",
+      "description": "Gros volumes et automatisations générales économiques avec long contexte déclaré.",
+      "profile": "utility_flash",
+      "specialties": [
+        "volume",
+        "automation",
+        "long-context"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "gemini-3.1-flash-lite",
+      "source_lines": [
+        94
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.25",
+          "output_usd_per_million": "1.50",
+          "declared_simulation_usd": "5.50",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": 1000000,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen3-coder-next",
+      "display_name": "Qwen3-Coder-Next",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Développement logiciel et agents de code à tarif agressif.",
+      "profile": "coder_economy",
+      "specialties": [
+        "code",
+        "software-engineering",
+        "agents"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3-coder-next",
+      "source_lines": [
+        104
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "<=32K",
+          "input_usd_per_million": "0.30",
+          "output_usd_per_million": "1.50",
+          "declared_simulation_usd": "6.00",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen-3-6-plus",
+      "display_name": "Qwen 3.6 Plus",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Généraliste solide avec raisonnement pour le niveau intermédiaire.",
+      "profile": "balanced_economy",
+      "specialties": [
+        "general",
+        "reasoning"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3.6-plus",
+      "source_lines": [
+        99
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "<=256K",
+          "input_usd_per_million": "0.276",
+          "output_usd_per_million": "1.651",
+          "declared_simulation_usd": "6.06",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen3-30b-a3b-thinking",
+      "display_name": "Qwen3 30B-A3B Thinking",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Raisonnement approfondi avec architecture MoE économique.",
+      "profile": "reasoning_economy",
+      "specialties": [
+        "reasoning",
+        "math",
+        "moe"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3-30b-a3b-thinking-2507",
+      "source_lines": [
+        109
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.20",
+          "output_usd_per_million": "2.40",
+          "declared_simulation_usd": "6.80",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen3-235b-a22b-thinking",
+      "display_name": "Qwen3 235B-A22B Thinking",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Raisonnement complexe à coût faible pour sa taille.",
+      "profile": "reasoning_economy",
+      "specialties": [
+        "reasoning",
+        "math",
+        "moe"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3-235b-a22b-thinking-2507",
+      "source_lines": [
+        114
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.23",
+          "output_usd_per_million": "2.30",
+          "declared_simulation_usd": "6.90",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "cohere-aya-expanse-8b",
+      "display_name": "Cohere Aya Expanse 8B",
+      "entity_kind": "model",
+      "provider_account_id": "cohere",
+      "developer": "Cohere",
+      "country": "Canada",
+      "description": "Modèle multilingue ouvert et économique pour applications internationales.",
+      "profile": "multilingual",
+      "specialties": [
+        "multilingual",
+        "international"
+      ],
+      "integration_stage": "quarantined",
+      "deployment_ids": [],
+      "exact_model_id": "c4ai-aya-expanse-8b",
+      "source_lines": [
+        124
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.50",
+          "output_usd_per_million": "1.50",
+          "declared_simulation_usd": "8.00",
+          "confidence": "shared_source_price",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [
+        "Multilingue (langues non détaillées)"
+      ],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "cohere-aya-expanse-32b",
+      "display_name": "Cohere Aya Expanse 32B",
+      "entity_kind": "model",
+      "provider_account_id": "cohere",
+      "developer": "Cohere",
+      "country": "Canada",
+      "description": "Modèle multilingue ouvert plus grand pour applications internationales.",
+      "profile": "multilingual",
+      "specialties": [
+        "multilingual",
+        "international"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "c4ai-aya-expanse-32b",
+      "source_lines": [
+        124
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.50",
+          "output_usd_per_million": "1.50",
+          "declared_simulation_usd": "8.00",
+          "confidence": "shared_source_price",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [
+        "Multilingue (langues non détaillées)"
+      ],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "mistral-large",
+      "display_name": "Mistral Large",
+      "entity_kind": "unresolved",
+      "provider_account_id": "mistral-ai",
+      "developer": "Mistral AI",
+      "country": "France",
+      "description": "Généraliste européen puissant pour raisonnement, code et travail professionnel.",
+      "profile": "advanced_general",
+      "specialties": [
+        "general",
+        "reasoning",
+        "code",
+        "europe"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "mistral-large-latest",
+      "source_lines": [
+        129
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.50",
+          "output_usd_per_million": "1.50",
+          "declared_simulation_usd": "8.00",
+          "confidence": "public_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "L'alias latest est officiel mais mouvant; l'identite du modele servi doit etre journalisee a chaque appel."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen3-coder-30b-a3b-instruct",
+      "display_name": "Qwen3-Coder 30B-A3B Instruct",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Code spécialisé et tâches agentiques avec MoE efficace.",
+      "profile": "coder_economy",
+      "specialties": [
+        "code",
+        "agents",
+        "moe"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3-coder-30b-a3b-instruct",
+      "source_lines": [
+        134
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "<=32K",
+          "input_usd_per_million": "0.45",
+          "output_usd_per_million": "2.25",
+          "declared_simulation_usd": "9.00",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "glm-4-7",
+      "display_name": "GLM-4.7",
+      "entity_kind": "model",
+      "provider_account_id": "z-ai",
+      "developer": "Z.ai / Zhipu",
+      "country": "Chine",
+      "description": "Généraliste et raisonnement intermédiaire entre Flash et flagship.",
+      "profile": "balanced_economy",
+      "specialties": [
+        "general",
+        "reasoning"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "glm-4.7",
+      "source_lines": [
+        139
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.60",
+          "output_usd_per_million": "2.20",
+          "declared_simulation_usd": "10.40",
+          "confidence": "official_verified",
+          "cached_input_usd_per_million": "0.11",
+          "source": "https://docs.z.ai/guides/overview/pricing"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarification officielle à revalider si Z.ai modifie sa grille."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "deepseek-v4-pro",
+      "display_name": "DeepSeek V4 Pro",
+      "entity_kind": "model",
+      "provider_account_id": "deepseek",
+      "developer": "DeepSeek",
+      "country": "Chine",
+      "description": "Raisonnement, code et agents complexes au niveau supérieur de la famille V4.",
+      "profile": "advanced_reasoning",
+      "specialties": [
+        "reasoning",
+        "code",
+        "agents"
+      ],
+      "integration_stage": "configured",
+      "deployment_ids": [
+        "deepseek-reasoning",
+        "deepseek-coder-api"
+      ],
+      "exact_model_id": "deepseek-v4-pro",
+      "source_lines": [
+        144,
+        205
+      ],
+      "pricing": [
+        {
+          "mode": "off_peak",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.66",
+          "output_usd_per_million": "1.98",
+          "declared_simulation_usd": "10.56",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        },
+        {
+          "mode": "peak",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "1.32",
+          "output_usd_per_million": "3.96",
+          "declared_simulation_usd": "21.12",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "kimi-k2-x",
+      "display_name": "Kimi K2.x",
+      "entity_kind": "unresolved",
+      "provider_account_id": "moonshot",
+      "developer": "Moonshot AI",
+      "country": "Chine",
+      "description": "Code, raisonnement long et agents pour tâches complexes.",
+      "profile": "advanced_general",
+      "specialties": [
+        "code",
+        "long-reasoning",
+        "agents"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": null,
+      "source_lines": [
+        149
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.60",
+          "output_usd_per_million": "2.50",
+          "declared_simulation_usd": "11.00",
+          "confidence": "discussed_reference",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Version Kimi exacte à vérifier lors de l’intégration."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "gemini-3-flash",
+      "display_name": "Gemini 3 Flash",
+      "entity_kind": "model",
+      "provider_account_id": "google",
+      "developer": "Google",
+      "country": "États-Unis",
+      "description": "Vitesse, agents, raisonnement et très grand contexte.",
+      "profile": "agentic_economy",
+      "specialties": [
+        "speed",
+        "agents",
+        "reasoning",
+        "long-context"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": null,
+      "source_lines": [
+        155
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.50",
+          "output_usd_per_million": "3.00",
+          "declared_simulation_usd": "11.00",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "hunyuan-hy4-family",
+      "display_name": "Hunyuan HY4 / famille Hunyuan",
+      "entity_kind": "unresolved",
+      "provider_account_id": "tencent",
+      "developer": "Tencent",
+      "country": "Chine",
+      "description": "Grand MoE pour agents, code, raisonnement complexe et très long contexte.",
+      "profile": "advanced_general",
+      "specialties": [
+        "agents",
+        "code",
+        "reasoning",
+        "long-context",
+        "moe"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "hy4-preview",
+      "source_lines": [
+        160
+      ],
+      "pricing": [
+        {
+          "mode": "simulation_only",
+          "region_scope": "Tencent endpoint unspecified",
+          "input_usd_per_million": null,
+          "output_usd_per_million": null,
+          "declared_simulation_usd": "13.00",
+          "confidence": "revalidation_required",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarif exact dépendant de l’endpoint Tencent à revalider."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "grok-build-0-1",
+      "display_name": "Grok Build 0.1",
+      "entity_kind": "model",
+      "provider_account_id": "xai",
+      "developer": "xAI",
+      "country": "États-Unis",
+      "description": "Construction logicielle et workflows de développement.",
+      "profile": "coder_economy",
+      "specialties": [
+        "code",
+        "software-engineering",
+        "workflows"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "grok-build-0.1",
+      "source_lines": [
+        165
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "short-context",
+          "input_usd_per_million": "1.00",
+          "output_usd_per_million": "2.00",
+          "declared_simulation_usd": "14.00",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarif source indiqué uniquement pour un contexte court."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "gemini-3-7-flash",
+      "display_name": "Gemini 3.7 Flash",
+      "entity_kind": "model",
+      "provider_account_id": "google",
+      "developer": "Google",
+      "country": "États-Unis",
+      "description": "Workflows agentiques et raisonnement multimodal à vitesse Flash.",
+      "profile": "agentic_economy",
+      "specialties": [
+        "agents",
+        "reasoning",
+        "multimodal",
+        "speed"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "gemini-3.7-flash",
+      "source_lines": [
+        170
+      ],
+      "pricing": [
+        {
+          "mode": "promotional",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.75",
+          "output_usd_per_million": "3.75",
+          "declared_simulation_usd": "15.00",
+          "confidence": "promotion_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarif promotionnel 2026 à revalider avant activation."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "glm-5",
+      "display_name": "GLM-5",
+      "entity_kind": "model",
+      "provider_account_id": "z-ai",
+      "developer": "Z.ai / Zhipu",
+      "country": "Chine",
+      "description": "Raisonnement avancé, code et agents complexes.",
+      "profile": "advanced_reasoning",
+      "specialties": [
+        "reasoning",
+        "code",
+        "agents"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "glm-5",
+      "source_lines": [
+        175
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "1.00",
+          "output_usd_per_million": "3.20",
+          "declared_simulation_usd": "16.40",
+          "confidence": "official_verified",
+          "cached_input_usd_per_million": "0.20",
+          "source": "https://docs.z.ai/guides/overview/pricing"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarification officielle à revalider si Z.ai modifie sa grille."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "gpt-5-4-mini",
+      "display_name": "GPT-5.4 Mini",
+      "entity_kind": "model",
+      "provider_account_id": "openai",
+      "developer": "OpenAI",
+      "country": "États-Unis",
+      "description": "Travail général et professionnel à forte capacité sous le coût d'un flagship.",
+      "profile": "advanced_general",
+      "specialties": [
+        "general",
+        "professional",
+        "reasoning"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "gpt-5.4-mini",
+      "source_lines": [
+        180
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "0.75",
+          "output_usd_per_million": "4.50",
+          "declared_simulation_usd": "16.50",
+          "confidence": "official_verified",
+          "cached_input_usd_per_million": "0.075",
+          "source": "https://developers.openai.com/api/docs/models/gpt-5.4-mini"
+        }
+      ],
+      "context_window_tokens": 400000,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "official_verified",
+      "technical_metadata_source": "https://developers.openai.com/api/docs/models/gpt-5.4-mini"
+    },
+    {
+      "card_id": "doubao-seed-2-1-pro",
+      "display_name": "Doubao / Seed 2.1 Pro",
+      "entity_kind": "unresolved",
+      "provider_account_id": "bytedance",
+      "developer": "ByteDance",
+      "country": "Chine",
+      "description": "Raisonnement multimodal et spatial pour agents et tâches complexes.",
+      "profile": "advanced_reasoning",
+      "specialties": [
+        "reasoning",
+        "multimodal",
+        "spatial",
+        "agents"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": null,
+      "source_lines": [
+        185
+      ],
+      "pricing": [
+        {
+          "mode": "simulation_only",
+          "region_scope": "Volcano Engine endpoint unspecified",
+          "input_usd_per_million": null,
+          "output_usd_per_million": null,
+          "declared_simulation_usd": "17.00",
+          "confidence": "revalidation_required",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarif exact dépendant de l’endpoint Volcano Engine à revalider."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "grok-4-20",
+      "display_name": "Grok 4.20",
+      "entity_kind": "model",
+      "provider_account_id": "xai",
+      "developer": "xAI",
+      "country": "États-Unis",
+      "description": "Appels d'outils, agents, long contexte et suivi strict des instructions.",
+      "profile": "advanced_general",
+      "specialties": [
+        "tools",
+        "agents",
+        "long-context",
+        "instructions"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "grok-4.20",
+      "source_lines": [
+        190
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "<200K",
+          "input_usd_per_million": "1.25",
+          "output_usd_per_million": "2.50",
+          "declared_simulation_usd": "17.50",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": 1000000,
+      "languages": [],
+      "limitations": [
+        "Tarif source indiqué pour les requêtes de moins de 200K tokens."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "grok-4-20-reasoning",
+      "display_name": "Grok 4.20 Reasoning",
+      "entity_kind": "model",
+      "provider_account_id": "xai",
+      "developer": "xAI",
+      "country": "États-Unis",
+      "description": "Raisonnement et agents outillés avec très grand contexte.",
+      "profile": "advanced_reasoning",
+      "specialties": [
+        "reasoning",
+        "agents",
+        "tools",
+        "long-context"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "grok-4.20-reasoning",
+      "source_lines": [
+        195
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "<200K",
+          "input_usd_per_million": "1.25",
+          "output_usd_per_million": "2.50",
+          "declared_simulation_usd": "17.50",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarif source indiqué pour les requêtes de moins de 200K tokens."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "grok-4-20-multi-agent",
+      "display_name": "Grok 4.20 Multi-Agent",
+      "entity_kind": "model",
+      "provider_account_id": "xai",
+      "developer": "xAI",
+      "country": "États-Unis",
+      "description": "Recherche profonde par plusieurs agents travaillant en parallèle.",
+      "profile": "agentic_economy",
+      "specialties": [
+        "multi-agent",
+        "research",
+        "parallelism"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "grok-4.20-multi-agent",
+      "source_lines": [
+        200
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "<200K",
+          "input_usd_per_million": "1.25",
+          "output_usd_per_million": "2.50",
+          "declared_simulation_usd": "17.50",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarif source indiqué pour les requêtes de moins de 200K tokens."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "glm-5-1",
+      "display_name": "GLM-5.1",
+      "entity_kind": "model",
+      "provider_account_id": "z-ai",
+      "developer": "Z.ai / Zhipu",
+      "country": "Chine",
+      "description": "Haut de gamme GLM pour raisonnement et tâches agentiques exigeantes.",
+      "profile": "advanced_reasoning",
+      "specialties": [
+        "reasoning",
+        "agents"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "glm-5.1",
+      "source_lines": [
+        210
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "1.40",
+          "output_usd_per_million": "4.40",
+          "declared_simulation_usd": "22.80",
+          "confidence": "official_verified",
+          "cached_input_usd_per_million": "0.26",
+          "source": "https://docs.z.ai/guides/overview/pricing"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarification officielle à revalider si Z.ai modifie sa grille."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen-3-7-max",
+      "display_name": "Qwen 3.7 Max",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Flagship Qwen pour long contexte, raisonnement et tâches complexes.",
+      "profile": "advanced_reasoning",
+      "specialties": [
+        "reasoning",
+        "long-context",
+        "complex-work"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3.7-max",
+      "source_lines": [
+        215
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "1.65",
+          "output_usd_per_million": "4.951",
+          "declared_simulation_usd": "26.40",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen-3-8-max",
+      "display_name": "Qwen 3.8 Max",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Flagship Qwen récent pour raisonnement, agents et tâches difficiles.",
+      "profile": "advanced_reasoning",
+      "specialties": [
+        "reasoning",
+        "agents",
+        "complex-work"
+      ],
+      "integration_stage": "configured",
+      "deployment_ids": [
+        "qwen-reasoning-api"
+      ],
+      "exact_model_id": "qwen3.8-max-0902",
+      "source_lines": [
+        220
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "1.65",
+          "output_usd_per_million": "4.951",
+          "declared_simulation_usd": "26.40",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "qwen3-coder-480b-a35b-instruct",
+      "display_name": "Qwen3-Coder 480B-A35B Instruct",
+      "entity_kind": "model",
+      "provider_account_id": "alibaba",
+      "developer": "Alibaba",
+      "country": "Chine",
+      "description": "Grand modèle de code pour édition de dépôts et ingénierie logicielle complexe.",
+      "profile": "advanced_coder",
+      "specialties": [
+        "code",
+        "repository-editing",
+        "software-engineering",
+        "moe"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "qwen3-coder-480b-a35b-instruct",
+      "source_lines": [
+        225
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "<=32K",
+          "input_usd_per_million": "1.50",
+          "output_usd_per_million": "7.50",
+          "declared_simulation_usd": "30.00",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarif source indiqué uniquement pour le palier inférieur ou égal à 32K tokens."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "grok-4-6",
+      "display_name": "Grok 4.6",
+      "entity_kind": "model",
+      "provider_account_id": "xai",
+      "developer": "xAI",
+      "country": "États-Unis",
+      "description": "Généraliste haut de gamme pour raisonnement et agents.",
+      "profile": "advanced_general",
+      "specialties": [
+        "general",
+        "reasoning",
+        "agents"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "grok-4.6",
+      "source_lines": [
+        230
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "<200K",
+          "input_usd_per_million": "2.00",
+          "output_usd_per_million": "6.00",
+          "declared_simulation_usd": "32.00",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarif source indiqué pour les requêtes de moins de 200K tokens."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "claude-sonnet-5",
+      "display_name": "Claude Sonnet 5",
+      "entity_kind": "model",
+      "provider_account_id": "anthropic",
+      "developer": "Anthropic",
+      "country": "États-Unis",
+      "description": "Code, agents et raisonnement pour tâches complexes de niveau flagship.",
+      "profile": "advanced_coder",
+      "specialties": [
+        "code",
+        "agents",
+        "reasoning"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "claude-sonnet-5",
+      "source_lines": [
+        235
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "2.00",
+          "output_usd_per_million": "10.00",
+          "declared_simulation_usd": "40.00",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "unknown",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "gemini-3-1-pro",
+      "display_name": "Gemini 3.1 Pro",
+      "entity_kind": "model",
+      "provider_account_id": "google",
+      "developer": "Google",
+      "country": "États-Unis",
+      "description": "Raisonnement complexe, multimodal et agents pour développement créatif.",
+      "profile": "premium_frontier",
+      "specialties": [
+        "reasoning",
+        "multimodal",
+        "agents",
+        "code"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": null,
+      "source_lines": [
+        240
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "prompts <=200K",
+          "input_usd_per_million": "2.00",
+          "output_usd_per_million": "12.00",
+          "declared_simulation_usd": "44.00",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Tarif source indiqué pour les prompts inférieurs ou égaux à 200K tokens."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "cohere-command-a",
+      "display_name": "Cohere Command A",
+      "entity_kind": "model",
+      "provider_account_id": "cohere",
+      "developer": "Cohere",
+      "country": "Canada",
+      "description": "RAG, agents entreprise, outils, SQL, multilingue et grands corpus.",
+      "profile": "enterprise_rag",
+      "specialties": [
+        "rag",
+        "enterprise",
+        "tools",
+        "sql",
+        "multilingual"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "command-a-03-2025",
+      "source_lines": [
+        245
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "2.50",
+          "output_usd_per_million": "10.00",
+          "declared_simulation_usd": "45.00",
+          "confidence": "declared_unverified",
+          "cached_input_usd_per_million": null,
+          "source": "catalogue_modeles_IA_API_2026.txt"
+        }
+      ],
+      "context_window_tokens": null,
+      "languages": [
+        "Multilingue (langues non détaillées)"
+      ],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "gpt-5-3-codex",
+      "display_name": "GPT-5.3 Codex",
+      "entity_kind": "model",
+      "provider_account_id": "openai",
+      "developer": "OpenAI",
+      "country": "États-Unis",
+      "description": "Coding agentique, modification de dépôts, debugging et ingénierie autonome.",
+      "profile": "advanced_coder",
+      "specialties": [
+        "code",
+        "repository-editing",
+        "debugging",
+        "agents"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "gpt-5.3-codex",
+      "source_lines": [
+        250
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "1.75",
+          "output_usd_per_million": "14.00",
+          "declared_simulation_usd": "45.50",
+          "confidence": "official_verified",
+          "cached_input_usd_per_million": "0.175",
+          "source": "https://developers.openai.com/api/docs/models/gpt-5.3-codex"
+        }
+      ],
+      "context_window_tokens": 400000,
+      "languages": [],
+      "limitations": [],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "official_verified",
+      "technical_metadata_source": "https://developers.openai.com/api/docs/models/gpt-5.3-codex"
+    },
+    {
+      "card_id": "gpt-5-4",
+      "display_name": "GPT-5.4",
+      "entity_kind": "model",
+      "provider_account_id": "openai",
+      "developer": "OpenAI",
+      "country": "États-Unis",
+      "description": "Travail professionnel complexe, raisonnement et code généraliste flagship.",
+      "profile": "premium_frontier",
+      "specialties": [
+        "professional",
+        "reasoning",
+        "code",
+        "general"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "gpt-5.4",
+      "source_lines": [
+        255
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "2.50",
+          "output_usd_per_million": "15.00",
+          "declared_simulation_usd": "55.00",
+          "confidence": "official_verified",
+          "cached_input_usd_per_million": "0.25",
+          "source": "https://developers.openai.com/api/docs/models/gpt-5.4"
+        }
+      ],
+      "context_window_tokens": 1050000,
+      "languages": [],
+      "limitations": [
+        "Au-delà de 272K tokens d'entrée, le tarif est multiplié par 2 en entrée et 1,5 en sortie."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "official_verified",
+      "technical_metadata_source": "https://developers.openai.com/api/docs/models/gpt-5.4"
+    },
+    {
+      "card_id": "kimi-k3",
+      "display_name": "Kimi K3",
+      "entity_kind": "model",
+      "provider_account_id": "moonshot",
+      "developer": "Moonshot AI",
+      "country": "Chine",
+      "description": "Flagship Kimi orienté raisonnement, code et agents.",
+      "profile": "premium_frontier",
+      "specialties": [
+        "reasoning",
+        "code",
+        "agents"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "kimi-k3",
+      "source_lines": [
+        260
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "3.00",
+          "output_usd_per_million": "15.00",
+          "declared_simulation_usd": "60.00",
+          "confidence": "official_verified",
+          "cached_input_usd_per_million": "0.30",
+          "source": "https://platform.kimi.ai/"
+        }
+      ],
+      "context_window_tokens": 1000000,
+      "languages": [],
+      "limitations": [
+        "Tarification officielle à revalider si Moonshot modifie sa grille.",
+        "Kimi K3 est always-thinking; les paramètres temperature, top_p et top_k doivent être omis."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "official_verified",
+      "technical_metadata_source": "https://platform.kimi.ai/docs/api/list-models"
+    },
+    {
+      "card_id": "gpt-5-4-pro",
+      "display_name": "GPT-5.4 Pro",
+      "entity_kind": "model",
+      "provider_account_id": "openai",
+      "developer": "OpenAI",
+      "country": "États-Unis",
+      "description": "Problèmes exceptionnellement difficiles où la qualité prime largement sur le coût.",
+      "profile": "exceptional",
+      "specialties": [
+        "hard-problems",
+        "maximum-quality",
+        "reasoning"
+      ],
+      "integration_stage": "catalogued",
+      "deployment_ids": [],
+      "exact_model_id": "gpt-5.4-pro",
+      "source_lines": [
+        265
+      ],
+      "pricing": [
+        {
+          "mode": "standard",
+          "region_scope": "unspecified",
+          "input_usd_per_million": "30.00",
+          "output_usd_per_million": "180.00",
+          "declared_simulation_usd": "660.00",
+          "confidence": "official_verified",
+          "cached_input_usd_per_million": null,
+          "source": "https://developers.openai.com/api/docs/models/gpt-5.4-pro"
+        }
+      ],
+      "context_window_tokens": 1050000,
+      "languages": [],
+      "limitations": [
+        "Au-delà de 272K tokens d'entrée, le tarif est multiplié par 2 en entrée et 1,5 en sortie.",
+        "Ce modèle utilise uniquement Responses API et ne prend pas en charge Structured Outputs."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "official_verified",
+      "technical_metadata_source": "https://developers.openai.com/api/docs/models/gpt-5.4-pro"
+    },
+    {
+      "card_id": "cohere-command-a-plus",
+      "display_name": "Cohere Command A+",
+      "entity_kind": "model",
+      "provider_account_id": "cohere",
+      "developer": "Cohere",
+      "country": "Canada",
+      "description": "Agents d'entreprise, raisonnement, multilingue et citations.",
+      "profile": "enterprise_rag",
+      "specialties": [
+        "enterprise",
+        "agents",
+        "multilingual",
+        "citations"
+      ],
+      "integration_stage": "quarantined",
+      "deployment_ids": [],
+      "exact_model_id": "command-a-plus-05-2026",
+      "source_lines": [
+        274
+      ],
+      "pricing": [],
+      "context_window_tokens": null,
+      "languages": [
+        "Multilingue (langues non détaillées)"
+      ],
+      "limitations": [
+        "Gratuit dans les limites de la clé ; le prix de production Model Vault n’est pas comparable par token."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "nvidia-nemotron-family",
+      "display_name": "NVIDIA Nemotron",
+      "entity_kind": "family",
+      "provider_account_id": "nvidia",
+      "developer": "NVIDIA",
+      "country": "États-Unis",
+      "description": "Famille pour agents, raisonnement, code, outils et spécialisation.",
+      "profile": "unknown_family",
+      "specialties": [
+        "agents",
+        "reasoning",
+        "code",
+        "fine-tuning"
+      ],
+      "integration_stage": "quarantined",
+      "deployment_ids": [],
+      "exact_model_id": null,
+      "source_lines": [
+        278
+      ],
+      "pricing": [],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Prix et caractéristiques dépendants de la variante et de l’endpoint fournisseur."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "amazon-nova-family",
+      "display_name": "Amazon Nova",
+      "entity_kind": "family",
+      "provider_account_id": "aws",
+      "developer": "Amazon / AWS",
+      "country": "États-Unis",
+      "description": "Famille intégrée à AWS avec variantes économiques pour gros volumes.",
+      "profile": "unknown_family",
+      "specialties": [
+        "aws",
+        "enterprise",
+        "volume"
+      ],
+      "integration_stage": "quarantined",
+      "deployment_ids": [],
+      "exact_model_id": null,
+      "source_lines": [
+        282
+      ],
+      "pricing": [],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Prix et caractéristiques dépendants de la variante Nova et du service AWS."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "meta-llama-family",
+      "display_name": "Meta Llama",
+      "entity_kind": "family",
+      "provider_account_id": "meta",
+      "developer": "Meta",
+      "country": "États-Unis",
+      "description": "Famille ouverte avec vaste écosystème, fine-tuning et nombreux hébergeurs.",
+      "profile": "unknown_family",
+      "specialties": [
+        "ecosystem",
+        "fine-tuning",
+        "provider-choice"
+      ],
+      "integration_stage": "quarantined",
+      "deployment_ids": [],
+      "exact_model_id": null,
+      "source_lines": [
+        286
+      ],
+      "pricing": [],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Aucun tarif API Meta universel ; prix dépendant de l’hébergeur cloud."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "microsoft-phi-family",
+      "display_name": "Microsoft Phi",
+      "entity_kind": "family",
+      "provider_account_id": "microsoft",
+      "developer": "Microsoft",
+      "country": "États-Unis",
+      "description": "Petits modèles efficaces pour latence, taille et coût contraints.",
+      "profile": "unknown_family",
+      "specialties": [
+        "small-models",
+        "latency",
+        "cost"
+      ],
+      "integration_stage": "quarantined",
+      "deployment_ids": [],
+      "exact_model_id": null,
+      "source_lines": [
+        290
+      ],
+      "pricing": [],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Prix et caractéristiques dépendants de la variante et de l’endpoint Azure ou partenaire."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "xiaomi-mimo-family",
+      "display_name": "Xiaomi MiMo",
+      "entity_kind": "family",
+      "provider_account_id": "xiaomi",
+      "developer": "Xiaomi",
+      "country": "Chine",
+      "description": "Famille orientée raisonnement efficace et rapport capacité/calcul.",
+      "profile": "unknown_family",
+      "specialties": [
+        "reasoning",
+        "efficiency"
+      ],
+      "integration_stage": "quarantined",
+      "deployment_ids": [],
+      "exact_model_id": null,
+      "source_lines": [
+        294
+      ],
+      "pricing": [],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Prix et caractéristiques dépendants de la variante et de l’endpoint."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "baidu-ernie-family",
+      "display_name": "Baidu ERNIE",
+      "entity_kind": "family",
+      "provider_account_id": "baidu",
+      "developer": "Baidu",
+      "country": "Chine",
+      "description": "Famille généraliste chinoise pour compréhension du chinois et entreprise.",
+      "profile": "unknown_family",
+      "specialties": [
+        "chinese",
+        "enterprise",
+        "general"
+      ],
+      "integration_stage": "quarantined",
+      "deployment_ids": [],
+      "exact_model_id": null,
+      "source_lines": [
+        298
+      ],
+      "pricing": [],
+      "context_window_tokens": null,
+      "languages": [
+        "Chinois"
+      ],
+      "limitations": [
+        "Prix et caractéristiques variables selon la version et Baidu Cloud."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "baichuan-family",
+      "display_name": "Baichuan",
+      "entity_kind": "family",
+      "provider_account_id": "baichuan",
+      "developer": "Baichuan Intelligence",
+      "country": "Chine",
+      "description": "Famille généraliste chinoise pour usages entreprise.",
+      "profile": "unknown_family",
+      "specialties": [
+        "chinese",
+        "enterprise",
+        "general"
+      ],
+      "integration_stage": "quarantined",
+      "deployment_ids": [],
+      "exact_model_id": null,
+      "source_lines": [
+        302
+      ],
+      "pricing": [],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Prix et caractéristiques variables selon l’endpoint."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "stepfun-family",
+      "display_name": "Step / StepFun",
+      "entity_kind": "family",
+      "provider_account_id": "stepfun",
+      "developer": "StepFun",
+      "country": "Chine",
+      "description": "Famille généraliste avec long contexte et raisonnement.",
+      "profile": "unknown_family",
+      "specialties": [
+        "long-context",
+        "reasoning",
+        "general"
+      ],
+      "integration_stage": "quarantined",
+      "deployment_ids": [],
+      "exact_model_id": null,
+      "source_lines": [
+        306
+      ],
+      "pricing": [],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Prix et caractéristiques variables selon le modèle."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    },
+    {
+      "card_id": "mistral-medium-family",
+      "display_name": "Mistral Medium",
+      "entity_kind": "unresolved",
+      "provider_account_id": "mistral-ai",
+      "developer": "Mistral AI",
+      "country": "France",
+      "description": "Palier Mistral intermédiaire pour tâches générales et code.",
+      "profile": "unknown_family",
+      "specialties": [
+        "general",
+        "code",
+        "europe"
+      ],
+      "integration_stage": "quarantined",
+      "deployment_ids": [],
+      "exact_model_id": null,
+      "source_lines": [
+        310
+      ],
+      "pricing": [],
+      "context_window_tokens": null,
+      "languages": [],
+      "limitations": [
+        "Prix et caractéristiques dépendants de la génération ou version active."
+      ],
+      "latency_p50_ms": null,
+      "latency_p95_ms": null,
+      "technical_metadata_confidence": "source_declared_unverified",
+      "technical_metadata_source": "catalogue_modeles_IA_API_2026.txt"
+    }
+  ]
+}

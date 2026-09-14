@@ -1,0 +1,45 @@
+[Unit]
+Description=Export Ops orchestrator Prometheus textfile metrics
+Documentation=file:/usr/share/doc/ops-orchestrator/orchestrator-v1.md
+After=local-fs.target ops-orchestrator.service
+ConditionPathExists=/etc/ops-orchestrator/config.json
+ConditionPathExists=/run/ops-orchestrator/api.sock
+
+[Service]
+Type=oneshot
+User=root
+Group=opsorchestrator-api
+ExecStart=/opt/ops-orchestrator/venv/bin/ops-orchestrator --socket /run/ops-orchestrator/api.sock export-metrics --config /etc/ops-orchestrator/config.json
+UMask=0027
+
+NoNewPrivileges=yes
+# The daemon renders from its private database.  This publisher can only read
+# the Unix API and atomically replace its root-owned Prometheus textfile.
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+KeyringMode=private
+RemoveIPC=yes
+LimitCORE=0
+TasksMax=32
+MemoryMax=128M
+
+ReadOnlyPaths=/etc/ops-orchestrator /run/ops-orchestrator
+ReadWritePaths=/var/lib/node-exporter/textfile

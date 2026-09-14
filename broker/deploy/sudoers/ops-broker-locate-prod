@@ -1,0 +1,2 @@
+# No arguments accepted: fixed LAN and existing prod host key only.
+opsbroker ALL=(root) NOPASSWD: /usr/local/libexec/ops-runbooks/locate-prod ""

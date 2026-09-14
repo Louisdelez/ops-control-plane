@@ -1,0 +1,19 @@
+[Unit]
+Description=Prepare a verified encrypted Ops component recovery bundle
+After=ops-broker-backup.service ops-memory-backup.service ops-native-backup.service openbao-raft-backup.service ops-zulip-backup.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/ops-recovery-bundle.py
+TimeoutStartSec=10min
+UMask=0077
+Nice=15
+MemoryMax=300M
+TasksMax=32
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/var/lib/ops-recovery-bundles

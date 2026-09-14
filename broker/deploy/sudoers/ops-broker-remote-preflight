@@ -1,0 +1,3 @@
+# Exact read-only resources, no arbitrary SSH command or destination.
+Cmnd_Alias OPS_REMOTE_PREFLIGHT = /usr/local/libexec/ops-runbooks/remote-preflight edge-vps, /usr/local/libexec/ops-runbooks/remote-preflight prod, /usr/local/libexec/ops-runbooks/remote-preflight nas, /usr/local/libexec/ops-runbooks/remote-preflight gamebox
+opsbroker ALL=(root) NOPASSWD: OPS_REMOTE_PREFLIGHT

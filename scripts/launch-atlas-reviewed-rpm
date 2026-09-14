@@ -1,0 +1,599 @@
+#!/usr/bin/python3 -I
+"""Launch the exact reviewed Atlas RPM payload without installing it first.
+
+The RPM and the executable it contains are both hash-bound by the release
+manifest.  The executable is materialized only in a sealed anonymous memfd,
+then replaces this process.  No credential is accepted or handled here.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import pwd
+import re
+import selectors
+import signal
+import stat
+import subprocess
+import sys
+import time
+from typing import Any
+
+
+ANCHOR_ROOT = Path(
+    "/usr/local/lib/ops-control-plane/atlas-api-zulip-2026.09.08.11"
+)
+MANIFEST_PATH = ANCHOR_ROOT / "release-manifest.v1.json"
+HELPER_PATH = ANCHOR_ROOT / "control-plane-bootstrap"
+LAUNCHER_PATH = ANCHOR_ROOT / "launch-atlas-reviewed-rpm"
+EXPECTED_RELEASE_ID = "atlas-api-zulip-2026.09.09.29"
+EXPECTED_RPM_PATH = Path(
+    "/home/ops-user/Téléchargements/Atlas-modeles-IA-0.1.0-1.x86_64.rpm"
+)
+EXPECTED_PAYLOAD_MEMBER = "/usr/bin/ops-model-manager"
+REVIEWED_MEMFD_NAME = "atlas-reviewed-rpm"
+MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+MAX_RPM_BYTES = 512 * 1024 * 1024
+MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
+MAX_QUERY_BYTES = 256 * 1024
+PROCESS_TIMEOUT_SECONDS = 60.0
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+SAFE_TOOL_ENV = {
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "PATH": "/usr/bin:/usr/sbin",
+}
+
+
+class LauncherError(RuntimeError):
+    """A fail-closed launcher validation error."""
+
+
+def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise LauncherError("Le manifeste contient une clé dupliquée.")
+        result[key] = value
+    return result
+
+
+def _read_regular_bounded(
+    path: Path,
+    maximum: int,
+    *,
+    owner_uid: int,
+    owner_gid: int,
+    exact_mode: int,
+) -> bytes:
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise LauncherError(f"Fichier revu indisponible : {path}") from exc
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != owner_uid
+            or before.st_gid != owner_gid
+            or stat.S_IMODE(before.st_mode) != exact_mode
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > maximum
+        ):
+            raise LauncherError(f"Fichier revu non sûr : {path}")
+        chunks: list[bytes] = []
+        observed = 0
+        while observed <= maximum:
+            chunk = os.read(descriptor, min(1024 * 1024, maximum + 1 - observed))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            observed += len(chunk)
+        after = os.fstat(descriptor)
+        if (
+            observed != before.st_size
+            or after.st_dev != before.st_dev
+            or after.st_ino != before.st_ino
+            or after.st_size != before.st_size
+            or after.st_mtime_ns != before.st_mtime_ns
+            or after.st_ctime_ns != before.st_ctime_ns
+            or after.st_uid != owner_uid
+            or after.st_gid != owner_gid
+            or stat.S_IMODE(after.st_mode) != exact_mode
+            or after.st_nlink != 1
+        ):
+            raise LauncherError(f"Fichier revu modifié pendant sa lecture : {path}")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _require_mapping(value: Any, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise LauncherError(f"Section de manifeste invalide : {label}")
+    return value
+
+
+def _require_sha256(value: Any, label: str) -> str:
+    if not isinstance(value, str) or SHA256_RE.fullmatch(value) is None:
+        raise LauncherError(f"Empreinte invalide : {label}")
+    return value
+
+
+def _validate_anchor_directory(path: Path, mode: int) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise LauncherError(f"Ancre locale indisponible : {path}") from exc
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or stat.S_IMODE(metadata.st_mode) != mode
+    ):
+        raise LauncherError(f"Répertoire d'ancre non sûr : {path}")
+
+
+def load_launch_contract(
+    manifest_path: Path = MANIFEST_PATH,
+    *,
+    owner_uid: int = 0,
+    owner_gid: int = 0,
+    manifest_mode: int = 0o444,
+    enforce_root_anchor: bool = True,
+) -> dict[str, str]:
+    if enforce_root_anchor:
+        _validate_anchor_directory(Path("/usr/local/lib/ops-control-plane"), 0o755)
+        _validate_anchor_directory(ANCHOR_ROOT, 0o555)
+    raw = _read_regular_bounded(
+        manifest_path,
+        MAX_MANIFEST_BYTES,
+        owner_uid=owner_uid,
+        owner_gid=owner_gid,
+        exact_mode=manifest_mode,
+    )
+    try:
+        manifest = json.loads(raw, object_pairs_hook=_object_without_duplicates)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise LauncherError("Le manifeste de release est invalide.") from exc
+    root = _require_mapping(manifest, "racine")
+    anchor = _require_mapping(root.get("trust_anchor"), "trust_anchor")
+    bootstrap = _require_mapping(root.get("bootstrap"), "bootstrap")
+    protocol = _require_mapping(bootstrap.get("gui_protocol"), "bootstrap.gui_protocol")
+    artifacts = _require_mapping(root.get("artifacts"), "artifacts")
+    atlas = _require_mapping(artifacts.get("atlas_rpm"), "artifacts.atlas_rpm")
+    if (
+        root.get("release_id") != EXPECTED_RELEASE_ID
+        or root.get("architecture") != "x86_64"
+        or platform.machine() != "x86_64"
+        or protocol.get("launcher_mode") != "sealed-rpm-payload-memfd"
+        or protocol.get("atlas_payload_member") != EXPECTED_PAYLOAD_MEMBER
+        or atlas.get("payload_executable_path") != EXPECTED_PAYLOAD_MEMBER
+        or atlas.get("source_path") != str(EXPECTED_RPM_PATH)
+        or atlas.get("name") != "modeles-ia"
+        or atlas.get("version") != "0.1.0"
+        or atlas.get("release") != "1"
+        or atlas.get("architecture") != "x86_64"
+        or anchor.get("version_directory") != str(ANCHOR_ROOT)
+        or anchor.get("manifest_path") != str(MANIFEST_PATH)
+        or anchor.get("bootstrap_helper_path") != str(HELPER_PATH)
+        or anchor.get("launcher_path") != str(LAUNCHER_PATH)
+        or anchor.get("manifest_mode") != "0444"
+        or anchor.get("bootstrap_helper_mode") != "0555"
+        or anchor.get("launcher_mode") != "0555"
+        or anchor.get("enrollment") != "physical-polkit-tofu-v1"
+    ):
+        raise LauncherError("Le contrat de lancement Atlas diffère de la release revue.")
+    payload_sha256 = _require_sha256(
+        protocol.get("atlas_payload_sha256"),
+        "bootstrap.gui_protocol.atlas_payload_sha256",
+    )
+    if payload_sha256 != _require_sha256(
+        atlas.get("payload_executable_sha256"),
+        "artifacts.atlas_rpm.payload_executable_sha256",
+    ):
+        raise LauncherError("Les empreintes du payload Atlas divergent.")
+    contract = {
+        "rpm_path": str(EXPECTED_RPM_PATH),
+        "rpm_sha256": _require_sha256(atlas.get("sha256"), "artifacts.atlas_rpm.sha256"),
+        "payload_sha256": payload_sha256,
+        "name": str(atlas["name"]),
+        "version": str(atlas["version"]),
+        "release": str(atlas["release"]),
+        "architecture": str(atlas["architecture"]),
+        "helper_sha256": _require_sha256(
+            bootstrap.get("helper_sha256"), "bootstrap.helper_sha256"
+        ),
+        "launcher_sha256": _require_sha256(
+            anchor.get("launcher_sha256"), "trust_anchor.launcher_sha256"
+        ),
+    }
+    if enforce_root_anchor:
+        helper_raw = _read_regular_bounded(
+            HELPER_PATH,
+            MAX_PAYLOAD_BYTES,
+            owner_uid=0,
+            owner_gid=0,
+            exact_mode=0o555,
+        )
+        launcher_raw = _read_regular_bounded(
+            LAUNCHER_PATH,
+            MAX_PAYLOAD_BYTES,
+            owner_uid=0,
+            owner_gid=0,
+            exact_mode=0o555,
+        )
+        if hashlib.sha256(helper_raw).hexdigest() != contract["helper_sha256"]:
+            raise LauncherError("Le helper root ne correspond pas au manifeste revu.")
+        if hashlib.sha256(launcher_raw).hexdigest() != contract["launcher_sha256"]:
+            raise LauncherError("Le lanceur root ne correspond pas au manifeste revu.")
+    return contract
+
+
+def _required_seals() -> int:
+    return (
+        fcntl.F_SEAL_WRITE
+        | fcntl.F_SEAL_GROW
+        | fcntl.F_SEAL_SHRINK
+        | fcntl.F_SEAL_SEAL
+    )
+
+
+def _new_memfd(name: str) -> int:
+    if not hasattr(os, "memfd_create") or not hasattr(os, "MFD_ALLOW_SEALING"):
+        raise LauncherError("Ce système Linux ne permet pas les fichiers anonymes scellés.")
+    return os.memfd_create(name, os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+
+
+def _seal_memfd(descriptor: int, mode: int) -> None:
+    os.fchmod(descriptor, mode)
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, _required_seals())
+    if fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) != _required_seals():
+        raise LauncherError("Le fichier anonyme Atlas n'est pas totalement scellé.")
+
+
+def _write_all(descriptor: int, value: bytes) -> None:
+    view = memoryview(value)
+    while view:
+        written = os.write(descriptor, view)
+        if written <= 0:
+            raise LauncherError("Écriture incomplète dans le fichier anonyme.")
+        view = view[written:]
+
+
+def _copy_reviewed_rpm(contract: dict[str, str]) -> int:
+    raw = _read_regular_bounded(
+        Path(contract["rpm_path"]),
+        MAX_RPM_BYTES,
+        owner_uid=os.getuid(),
+        owner_gid=os.getgid(),
+        exact_mode=0o644,
+    )
+    if hashlib.sha256(raw).hexdigest() != contract["rpm_sha256"]:
+        raise LauncherError("L'empreinte du RPM Atlas diffère de la release revue.")
+    descriptor = _new_memfd("atlas-reviewed-rpm-source")
+    try:
+        _write_all(descriptor, raw)
+        _seal_memfd(descriptor, 0o400)
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+    finally:
+        # Drop the only potentially large Python copy before extraction.
+        raw = b""
+
+
+def _trusted_tool(path: str, *, symlink_allowed: bool = False) -> str:
+    requested = Path(path)
+    try:
+        requested_metadata = requested.lstat()
+        resolved = requested.resolve(strict=True)
+        metadata = resolved.stat()
+    except (OSError, RuntimeError) as exc:
+        raise LauncherError(f"Outil système indisponible : {path}") from exc
+    if (
+        (requested.is_symlink() and not symlink_allowed)
+        or (not requested.is_symlink() and not stat.S_ISREG(requested_metadata.st_mode))
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or metadata.st_mode & 0o022
+        or metadata.st_mode & 0o111 == 0
+        or resolved.parent != Path("/usr/bin")
+    ):
+        raise LauncherError(f"Outil système non sûr : {path}")
+    # Keep argv[0] as rpm2cpio: rpm dispatches behavior from that entry point.
+    return path
+
+
+def _run_bounded(command: list[str], *, pass_fd: int, maximum: int) -> bytes:
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            pass_fds=(pass_fd,),
+            env=SAFE_TOOL_ENV,
+            cwd="/",
+            start_new_session=True,
+        )
+        if process.stdout is None:
+            raise LauncherError("La vérification du RPM Atlas n'a pas créé son canal privé.")
+        output_fd = process.stdout.fileno()
+        os.set_blocking(output_fd, False)
+        selector = selectors.DefaultSelector()
+        selector.register(output_fd, selectors.EVENT_READ)
+        output = bytearray()
+        deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
+        try:
+            eof = False
+            while not eof:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(max(0.0, remaining)):
+                    raise LauncherError("La vérification du RPM Atlas a expiré.")
+                while True:
+                    try:
+                        chunk = os.read(output_fd, min(64 * 1024, maximum + 1 - len(output)))
+                    except BlockingIOError:
+                        break
+                    if not chunk:
+                        eof = True
+                        break
+                    output.extend(chunk)
+                    if len(output) > maximum:
+                        raise LauncherError("La réponse de vérification RPM est trop grande.")
+        finally:
+            selector.close()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or process.wait(timeout=remaining) != 0:
+            raise LauncherError("La vérification du RPM Atlas a échoué.")
+        return bytes(output)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LauncherError("La vérification du RPM Atlas a échoué.") from exc
+    finally:
+        if process is not None:
+            if process.poll() is None:
+                _terminate_pipeline((process,))
+            if process.stdout is not None:
+                process.stdout.close()
+
+
+def _validate_rpm_inventory(rpm_descriptor: int, contract: dict[str, str]) -> None:
+    rpm = _trusted_tool("/usr/bin/rpm")
+    rpm_path = f"/proc/self/fd/{rpm_descriptor}"
+    identity = _run_bounded(
+        [rpm, "-qp", "--qf", "%{NAME} %{VERSION} %{RELEASE} %{ARCH}", rpm_path],
+        pass_fd=rpm_descriptor,
+        maximum=4096,
+    ).strip()
+    expected_identity = (
+        f"{contract['name']} {contract['version']} "
+        f"{contract['release']} {contract['architecture']}"
+    ).encode("ascii")
+    if identity != expected_identity:
+        raise LauncherError("L'identité du RPM Atlas diffère de la release revue.")
+    query = "[%{FILENAMES}\\t%{FILEDIGESTS}\\t%{FILEMODES:octal}\\t%{FILEUSERNAME}\\t%{FILEGROUPNAME}\\n]"
+    inventory = _run_bounded(
+        [rpm, "-qp", "--qf", query, rpm_path],
+        pass_fd=rpm_descriptor,
+        maximum=MAX_QUERY_BYTES,
+    )
+    try:
+        lines = inventory.decode("utf-8", "strict").splitlines()
+    except UnicodeDecodeError as exc:
+        raise LauncherError("L'inventaire du RPM Atlas est invalide.") from exc
+    expected = (
+        f"{EXPECTED_PAYLOAD_MEMBER}\t{contract['payload_sha256']}\t"
+        "100755\troot\troot"
+    )
+    matches = [line for line in lines if line.startswith(f"{EXPECTED_PAYLOAD_MEMBER}\t")]
+    if matches != [expected]:
+        raise LauncherError("Le payload exécutable du RPM Atlas n'est pas celui revu.")
+
+
+def _terminate_pipeline(processes: tuple[subprocess.Popen[bytes], ...]) -> None:
+    for process in processes:
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+    for process in processes:
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def _extract_payload(rpm_descriptor: int, expected_sha256: str) -> int:
+    rpm2cpio = _trusted_tool("/usr/bin/rpm2cpio", symlink_allowed=True)
+    cpio = _trusted_tool("/usr/bin/cpio")
+    rpm_path = f"/proc/self/fd/{rpm_descriptor}"
+    first: subprocess.Popen[bytes] | None = None
+    second: subprocess.Popen[bytes] | None = None
+    payload_descriptor = _new_memfd(REVIEWED_MEMFD_NAME)
+    digest = hashlib.sha256()
+    observed = 0
+    deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
+    try:
+        first = subprocess.Popen(
+            [rpm2cpio, rpm_path],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            pass_fds=(rpm_descriptor,),
+            env=SAFE_TOOL_ENV,
+            cwd="/",
+            start_new_session=True,
+        )
+        if first.stdout is None:
+            raise LauncherError("L'extracteur RPM n'a pas créé son canal privé.")
+        second = subprocess.Popen(
+            [cpio, "-i", "--quiet", "--to-stdout", f".{EXPECTED_PAYLOAD_MEMBER}"],
+            stdin=first.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            env=SAFE_TOOL_ENV,
+            cwd="/",
+            start_new_session=True,
+        )
+        first.stdout.close()
+        if second.stdout is None:
+            raise LauncherError("L'extracteur CPIO n'a pas créé son canal privé.")
+        output_fd = second.stdout.fileno()
+        os.set_blocking(output_fd, False)
+        selector = selectors.DefaultSelector()
+        selector.register(output_fd, selectors.EVENT_READ)
+        try:
+            eof = False
+            while not eof:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise LauncherError("L'extraction du payload Atlas a expiré.")
+                if not selector.select(remaining):
+                    raise LauncherError("L'extraction du payload Atlas a expiré.")
+                while True:
+                    try:
+                        chunk = os.read(output_fd, 1024 * 1024)
+                    except BlockingIOError:
+                        break
+                    if not chunk:
+                        eof = True
+                        break
+                    observed += len(chunk)
+                    if observed > MAX_PAYLOAD_BYTES:
+                        raise LauncherError("Le payload Atlas dépasse la taille revue.")
+                    digest.update(chunk)
+                    _write_all(payload_descriptor, chunk)
+        finally:
+            selector.close()
+        remaining = max(0.1, deadline - time.monotonic())
+        second_status = second.wait(timeout=remaining)
+        remaining = max(0.1, deadline - time.monotonic())
+        first_status = first.wait(timeout=remaining)
+        if (
+            first_status != 0
+            or second_status != 0
+            or observed == 0
+            or digest.hexdigest() != expected_sha256
+        ):
+            raise LauncherError("Le payload extrait ne correspond pas au RPM revu.")
+        _seal_memfd(payload_descriptor, 0o500)
+        metadata = os.fstat(payload_descriptor)
+        if (
+            metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o500
+            or metadata.st_nlink != 0
+            or metadata.st_size != observed
+        ):
+            raise LauncherError("Le payload Atlas anonyme n'a pas le profil attendu.")
+        return payload_descriptor
+    except BaseException:
+        if first is not None or second is not None:
+            _terminate_pipeline(tuple(p for p in (first, second) if p is not None))
+        os.close(payload_descriptor)
+        raise
+    finally:
+        if second is not None and second.stdout is not None:
+            second.stdout.close()
+
+
+def prepare_reviewed_payload(
+    manifest_path: Path = MANIFEST_PATH,
+    *,
+    owner_uid: int = 0,
+    owner_gid: int = 0,
+    manifest_mode: int = 0o444,
+    enforce_root_anchor: bool = True,
+) -> tuple[int, dict[str, str]]:
+    contract = load_launch_contract(
+        manifest_path,
+        owner_uid=owner_uid,
+        owner_gid=owner_gid,
+        manifest_mode=manifest_mode,
+        enforce_root_anchor=enforce_root_anchor,
+    )
+    rpm_descriptor = _copy_reviewed_rpm(contract)
+    try:
+        _validate_rpm_inventory(rpm_descriptor, contract)
+        payload_descriptor = _extract_payload(rpm_descriptor, contract["payload_sha256"])
+    finally:
+        os.close(rpm_descriptor)
+    return payload_descriptor, contract
+
+
+def _graphical_environment() -> dict[str, str]:
+    account = pwd.getpwuid(os.getuid())
+    runtime = f"/run/user/{os.getuid()}"
+    environment = {
+        "HOME": account.pw_dir,
+        "USER": account.pw_name,
+        "LOGNAME": account.pw_name,
+        "PATH": "/usr/bin:/usr/sbin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "XDG_RUNTIME_DIR": runtime,
+        "XDG_DATA_DIRS": "/usr/local/share:/usr/share",
+    }
+    display = os.environ.get("DISPLAY", "")
+    if re.fullmatch(r":[0-9]{1,3}(?:\.[0-9]{1,3})?", display):
+        environment["DISPLAY"] = display
+    wayland = os.environ.get("WAYLAND_DISPLAY", "")
+    if re.fullmatch(r"wayland-[0-9]{1,3}", wayland):
+        environment["WAYLAND_DISPLAY"] = wayland
+    session_type = os.environ.get("XDG_SESSION_TYPE", "")
+    if session_type in {"wayland", "x11"}:
+        environment["XDG_SESSION_TYPE"] = session_type
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
+    if re.fullmatch(r"[A-Za-z0-9_:+.-]{1,128}", desktop):
+        environment["XDG_CURRENT_DESKTOP"] = desktop
+    bus = Path(runtime) / "bus"
+    if bus.exists():
+        environment["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+    authority = os.environ.get("XAUTHORITY", "")
+    if authority.startswith(f"{runtime}/") and len(authority) <= 4096:
+        environment["XAUTHORITY"] = authority
+    if "DISPLAY" not in environment and "WAYLAND_DISPLAY" not in environment:
+        raise LauncherError("Aucune session graphique locale sûre n'est disponible.")
+    return environment
+
+
+def main() -> int:
+    if os.geteuid() != os.getuid() or os.getegid() != os.getgid() or os.getuid() == 0:
+        raise LauncherError("Atlas doit être lancé par l'utilisateur local non privilégié.")
+    if len(sys.argv) != 1:
+        raise LauncherError("Ce lanceur n'accepte aucun argument.")
+    if Path(__file__) != LAUNCHER_PATH:
+        raise LauncherError("Atlas doit être lancé depuis l'ancre root revue.")
+    payload_descriptor, _contract = prepare_reviewed_payload()
+    executable = f"/proc/self/fd/{payload_descriptor}"
+    try:
+        os.chdir("/")
+        os.execve(executable, [EXPECTED_PAYLOAD_MEMBER], _graphical_environment())
+    finally:
+        os.close(payload_descriptor)
+    raise LauncherError("Le lancement d'Atlas a échoué.")
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except LauncherError as exc:
+        print(f"Atlas n'a pas démarré : {exc}", file=sys.stderr)
+        raise SystemExit(1) from None

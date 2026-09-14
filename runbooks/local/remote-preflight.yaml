@@ -1,0 +1,19 @@
+id: inventory.remote-preflight.v1
+version: 1
+project: infra-shared
+action_class: A
+description: Observer par SSH natif l’état systemd d’une des quatre machines déclarées, sans modification distante
+timeout_seconds: 35
+command:
+  argv:
+    - /usr/bin/sudo
+    - -n
+    - /usr/local/libexec/ops-runbooks/remote-preflight
+    - "{resource}"
+parameters:
+  resource:
+    type: enum
+    values: [edge-vps, prod, nas, gamebox]
+output:
+  max_bytes: 4096
+  redact: true

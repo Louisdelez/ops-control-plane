@@ -1,0 +1,90 @@
+#!/usr/bin/python3 -I
+"""Owner-only fixed mode switch. No arbitrary commands, paths or secret output."""
+import fcntl,json,os,subprocess,sys,tempfile,time
+from pathlib import Path
+MODE=Path('/etc/ops-execution-mode.json')
+CONFIG=Path('/etc/ops-native/config.json')
+ACCOUNTS=Path('/run/ops-native-cli-accounts.json')
+KEYS=(Path('/run/ops-native-model/deepseek'),)
+def write(path,value,mode):
+    fd,name=tempfile.mkstemp(prefix='.'+path.name+'-',dir=path.parent)
+    try:
+        os.fchmod(fd,mode)
+        with os.fdopen(fd,'w') as f:json.dump(value,f);f.write('\n');f.flush();os.fsync(f.fileno())
+        os.replace(name,path)
+    finally:
+        if os.path.exists(name):os.unlink(name)
+def run(*args):
+    return subprocess.run(['/usr/bin/systemctl',*args],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=25).returncode==0
+def current():
+    try:return json.loads(MODE.read_text())['mode']
+    except (OSError,ValueError,KeyError):return 'cli'
+def status():
+    configured=json.loads(CONFIG.read_text()).get('generation_enabled') is True
+    ready=all(p.is_file() and p.stat().st_size>0 for p in KEYS)
+    budget=subprocess.run(['/opt/ops-native/venv/bin/python','-I','-m','ops_native.budget_status'],capture_output=True,timeout=5)
+    try:budgets=json.loads(budget.stdout) if budget.returncode==0 else {'available':False}
+    except ValueError:budgets={'available':False}
+    return {'mode':current(),'api_enabled':current()!='cli' and configured and run('is-active','--quiet','ops-native-model.service'),'keys_ready':ready,'budgets':budgets}
+
+def automatic():
+    probe=subprocess.run(['/usr/sbin/runuser','-u','ops-user','--','/opt/ops-native/venv/bin/python','-I','-m','ops_native.cli_pilot','--accounts'],capture_output=True,timeout=45)
+    try:
+        accounts=json.loads(probe.stdout) if probe.returncode==0 else {}
+        accounts={tool:accounts.get(tool) is True for tool in ('codex','claude')}
+    except (ValueError,AttributeError):accounts={'codex':False,'claude':False}
+    write(ACCOUNTS,accounts,0o644)
+    # OpenBao's native agent waits for missing keys; no provider call is made.
+    if not run('start','ops-native-secrets.service'):raise RuntimeError()
+    ready=all(p.is_file() and p.stat().st_size>0 for p in KEYS)
+    config=json.loads(CONFIG.read_text())
+    if ready:
+        if not run('enable','--now','ops-native-model.service'):raise RuntimeError()
+        write(MODE,{'mode':'hybrid','selection':'automatic'},0o644)
+        if not config.get('generation_enabled'):
+            config['generation_enabled']=True;write(CONFIG,config,0o600)
+            if not run('restart','ops-native.service'):raise RuntimeError()
+    else:
+        write(MODE,{'mode':'cli','selection':'automatic'},0o644)
+        if config.get('generation_enabled'):
+            config['generation_enabled']=False;write(CONFIG,config,0o600)
+            if not run('restart','ops-native.service'):raise RuntimeError()
+        if not run('stop','ops-native-model.service'):raise RuntimeError()
+
+def main():
+    if os.geteuid()!=0 or len(sys.argv)!=2 or sys.argv[1] not in {'status','cli','api','hybrid','activate','auto'}:raise ValueError()
+    action=sys.argv[1]
+    with open('/run/lock/ops-execution-mode.lock','a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        if action=='auto':
+            automatic()
+            subprocess.run(['/opt/ops-native/venv/bin/python','-I','-m','ops_native.memory_capabilities'],check=True,timeout=100)
+        elif action in {'cli','api','hybrid'}:
+            previous=current()
+            if action=='api':
+                scopes=subprocess.run(['/usr/sbin/runuser','-u','ops-user','--','/usr/bin/env','XDG_RUNTIME_DIR=/run/user/1000','DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus','/usr/bin/systemctl','--user','list-units','--state=active','--no-legend','ops-terminal-*.scope'],capture_output=True,timeout=10)
+                if scopes.returncode or scopes.stdout.strip():raise RuntimeError()
+            write(MODE,{'mode':action},0o644)
+            if action=='cli':
+                # Stop in-flight facade calls too, before reporting the switch complete.
+                if not run('disable','--now','ops-native-model.service'):write(MODE,{'mode':previous},0o644);raise RuntimeError()
+                config=json.loads(CONFIG.read_text())
+                if config.get('generation_enabled'):
+                    config['generation_enabled']=False;write(CONFIG,config,0o600)
+                    if not run('restart','ops-native.service'):raise RuntimeError()
+            with open('/var/log/ops-execution-mode.log','a') as log:log.write(json.dumps({'at':int(time.time()),'mode':action})+'\n')
+        elif action=='activate':
+            if current()=='cli':raise ValueError()
+            if not run('start','ops-native-secrets.service'):raise RuntimeError()
+            for _ in range(10):
+                if status()['keys_ready']:break
+                time.sleep(1)
+            if not status()['keys_ready']:raise RuntimeError()
+            if not run('enable','--now','ops-native-model.service'):raise RuntimeError()
+            config=json.loads(CONFIG.read_text());config['generation_enabled']=True
+            write(CONFIG,config,0o600)
+            if not run('restart','ops-native.service'):raise RuntimeError()
+        print(json.dumps(status()))
+if __name__=='__main__':
+    try:main()
+    except Exception:print('{"error":"mode_operation_failed"}');raise SystemExit(1)

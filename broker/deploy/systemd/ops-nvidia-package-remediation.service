@@ -1,0 +1,30 @@
+[Unit]
+Description=Human-approved fixed NVIDIA 580xx package remediation
+Documentation=file:///opt/ops-broker/README.md
+After=local-fs.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStartPre=/usr/bin/rm -f /run/ops-nvidia-package-remediation/result.json
+ExecStart=/usr/bin/systemd-inhibit --mode=block --what=idle:sleep:shutdown --who=ops-nvidia-remediation --why=bounded-nvidia-580xx-package-transaction /usr/local/libexec/ops-runbooks/nvidia-package-remediation-worker ensure-580xx
+RuntimeDirectory=ops-nvidia-package-remediation
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+TimeoutStartSec=55min
+TimeoutStopSec=15min
+KillMode=control-group
+UMask=0077
+
+# This narrowly scoped, class-C unit must write the RPM database and /usr and
+# may fetch signed Fedora/RPM Fusion packages. The broker itself remains under
+# ProtectSystem=strict and delegates only this fixed unit through systemd.
+ProtectHome=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+LockPersonality=yes

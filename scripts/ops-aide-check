@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly aide_bin=${OPS_AIDE_BIN:-/usr/bin/aide}
+readonly aide_config=${OPS_AIDE_CONFIG:-/etc/aide/ops-control-plane.conf}
+readonly aide_base_config=${OPS_AIDE_BASE_CONFIG:-/etc/aide.conf}
+readonly aide_database=${OPS_AIDE_DATABASE:-/var/lib/aide/aide.db.gz}
+readonly metric_dir=${OPS_AIDE_METRIC_DIR:-/var/lib/node-exporter/textfile}
+readonly metric_file=${metric_dir}/aide.prom
+readonly metric_owner=${OPS_AIDE_METRIC_OWNER:-root}
+readonly metric_group=${OPS_AIDE_METRIC_GROUP:-node-exporter}
+
+if [[ ${EUID} -ne 0 ]]; then
+  echo "ops-aide-check must run as root." >&2
+  exit 1
+fi
+
+if [[ ! -d $metric_dir || -L $metric_dir ]]; then
+  echo "AIDE metric directory is absent or unsafe: $metric_dir" >&2
+  exit 1
+fi
+
+is_trusted_regular_file() {
+  local path=$1
+  local owner mode
+
+  [[ -f $path && ! -L $path && -r $path ]] || return 1
+  owner=$(stat -Lc '%u' -- "$path") || return 1
+  mode=$(stat -Lc '%a' -- "$path") || return 1
+  [[ $owner == 0 ]] || return 1
+  (( (8#$mode & 022) == 0 ))
+}
+
+write_metrics() {
+  local database_present=$1
+  local timestamp=$2
+  local status=$3
+  local aide_exit_code=$4
+  local clean=$5
+  local changes=$6
+  local error=$7
+  local tmp_file
+
+  tmp_file=$(mktemp "$metric_dir/.aide.prom.XXXXXX")
+  trap 'rm -f -- "$tmp_file"' EXIT
+
+  {
+    echo '# HELP ops_aide_database_present Whether the trusted AIDE input database is present as a regular file.'
+    echo '# TYPE ops_aide_database_present gauge'
+    printf 'ops_aide_database_present %d\n' "$database_present"
+    echo '# HELP ops_aide_last_check_timestamp_seconds Unix timestamp of the last attempted AIDE check; zero means never run.'
+    echo '# TYPE ops_aide_last_check_timestamp_seconds gauge'
+    printf 'ops_aide_last_check_timestamp_seconds %d\n' "$timestamp"
+    echo '# HELP ops_aide_last_check_status Last check status: 0 clean, 1 changes, 2 error, 3 database missing, 4 never run.'
+    echo '# TYPE ops_aide_last_check_status gauge'
+    printf 'ops_aide_last_check_status %d\n' "$status"
+    echo '# HELP ops_aide_last_check_exit_code Raw AIDE exit code; minus one means AIDE was not invoked.'
+    echo '# TYPE ops_aide_last_check_exit_code gauge'
+    printf 'ops_aide_last_check_exit_code %d\n' "$aide_exit_code"
+    echo '# HELP ops_aide_last_check_clean Whether the last attempted AIDE check completed with no differences.'
+    echo '# TYPE ops_aide_last_check_clean gauge'
+    printf 'ops_aide_last_check_clean %d\n' "$clean"
+    echo '# HELP ops_aide_last_check_changes_detected Whether AIDE reported added, removed, or changed files.'
+    echo '# TYPE ops_aide_last_check_changes_detected gauge'
+    printf 'ops_aide_last_check_changes_detected %d\n' "$changes"
+    echo '# HELP ops_aide_last_check_error Whether integrity verification is unavailable due to an error, missing baseline, or no completed check.'
+    echo '# TYPE ops_aide_last_check_error gauge'
+    printf 'ops_aide_last_check_error %d\n' "$error"
+  } >"$tmp_file"
+
+  chown "$metric_owner:$metric_group" "$tmp_file"
+  chmod 0640 "$tmp_file"
+  mv -f -- "$tmp_file" "$metric_file"
+  trap - EXIT
+}
+
+attempt_timestamp=$(date +%s)
+readonly attempt_timestamp
+
+if [[ ! -x $aide_bin ]]; then
+  write_metrics 0 "$attempt_timestamp" 2 127 0 0 1
+  echo "AIDE executable is unavailable: $aide_bin" >&2
+  exit 127
+fi
+
+if ! is_trusted_regular_file "$aide_config" \
+  || ! is_trusted_regular_file "$aide_base_config"; then
+  write_metrics 0 "$attempt_timestamp" 2 17 0 0 1
+  echo "An AIDE configuration file is absent or unsafe." >&2
+  exit 17
+fi
+
+# A symlink is rejected even if its target is readable: the approved database
+# must be promoted explicitly as a root-owned regular file.
+if ! is_trusted_regular_file "$aide_database"; then
+  write_metrics 0 "$attempt_timestamp" 3 -1 0 0 1
+  echo "AIDE database is absent or unsafe; check denied: $aide_database" >&2
+  exit 24
+fi
+
+set +e
+"$aide_bin" --config="$aide_config" --no-progress --check
+aide_rc=$?
+set -e
+
+case $aide_rc in
+  0)
+    write_metrics 1 "$attempt_timestamp" 0 "$aide_rc" 1 0 0
+    echo "AIDE check completed: clean."
+    ;;
+  [1-7])
+    write_metrics 1 "$attempt_timestamp" 1 "$aide_rc" 0 1 0
+    echo "AIDE check completed: integrity changes detected (exit $aide_rc)." >&2
+    ;;
+  *)
+    write_metrics 1 "$attempt_timestamp" 2 "$aide_rc" 0 0 1
+    echo "AIDE check failed operationally (exit $aide_rc)." >&2
+    ;;
+esac
+
+exit "$aide_rc"

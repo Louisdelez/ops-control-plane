@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools==83.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+authors = [{ name = "LOUIS DELEZ" }]
+name = "ops-memory"
+version = "0.1.2"
+description = "Fail-closed local semantic memory for the Dell Ops control plane"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp==2.1.1"]
+dev = ["pytest==9.1.1"]
+
+[project.scripts]
+ops-memory = "ops_memory.cli:main"
+ops-memory-mcp = "ops_memory.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+pythonpath = ["src"]
+testpaths = ["tests"]

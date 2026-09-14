@@ -1,0 +1,52 @@
+_config_version: 39
+model: {provider: "custom:ops-orchestrator-hermes", default: qwen-coordinator, context_length: 64000, api_mode: chat_completions}
+providers:
+  ops-orchestrator-hermes: {api: "http://127.0.0.1:8643/v1", key_env: HERMES_FACADE_TOKEN, transport: chat_completions, default_model: qwen-coordinator, discover_models: false, models: {qwen-coordinator: {context_length: 64000}}}
+agent: {reasoning_effort: none, disabled_toolsets: [terminal, file, code_execution, delegation, browser, computer_use, cronjob, web, kanban]}
+plugins: {enabled: []}
+skills: {external_dirs: [], project_discovery: false, inline_shell: false, guard_agent_created: true, write_approval: true}
+curator: {enabled: false}
+secrets:
+  command: {enabled: true, command: "/usr/local/libexec/hermes-secrets-env infra-shared", helper_timeout_seconds: 3, override_existing: true}
+mcp_servers:
+  ops-broker:
+    command: /usr/local/libexec/ops-broker-mcp-profile
+    args: [infra-operator]
+    env: {}
+    enabled: true
+    trust: untrusted
+    connect_timeout: 5
+    timeout: 120
+    supports_parallel_tool_calls: false
+    sampling: {enabled: false}
+    elicitation: {enabled: false}
+    tools: {include: [list_authorized_runbooks, create_mission, list_open_missions, get_mission, list_actions_for_mission, create_incident, list_open_incidents, get_incident, list_actions_for_incident, request_runbook_action, get_action, get_mission_state, list_mission_checkpoints, list_mission_records, list_model_traces, get_incident_details, get_action_artifacts, verify_audit_chain], resources: false, prompts: false}
+  ops-orchestrator:
+    command: /usr/local/libexec/ops-orchestrator-mcp-profile
+    args: [infra-shared]
+    env: {}
+    enabled: true
+    trust: untrusted
+    connect_timeout: 5
+    timeout: 240
+    supports_parallel_tool_calls: false
+    sampling: {enabled: false}
+    elicitation: {enabled: false}
+    tools: {include: [get_orchestrator_health, get_model_budgets, get_model_performance, get_model_trace, route_model_task, record_orchestrator_signal], resources: false, prompts: false}
+  ops-memory:
+    command: /usr/local/libexec/ops-memory-mcp-profile
+    args: [infra-shared]
+    env: {}
+    enabled: true
+    trust: untrusted
+    connect_timeout: 5
+    timeout: 120
+    supports_parallel_tool_calls: false
+    sampling: {enabled: false}
+    elicitation: {enabled: false}
+    tools: {include: [memory_search, memory_get, memory_ingest, memory_summarize, memory_health], resources: false, prompts: false}
+platform_toolsets: {api_server: [clarify, skills], cli: [clarify, skills]}
+platforms:
+  api_server: {enabled: false}
+terminal: {backend: local, home_mode: profile, cwd: /var/lib/hermes/profiles/infra-shared/workspace}
+tool_output: {max_bytes: 20000, max_lines: 500, max_line_length: 1000}

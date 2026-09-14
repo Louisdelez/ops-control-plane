@@ -1,0 +1,15 @@
+#!/usr/bin/bash -p
+set -euo pipefail
+if (( $# != 0 )); then exit 64; fi
+if [[ $EUID == $(/usr/bin/id -u hermesd) ]]; then
+    exec /usr/bin/sudo -n -u opsbroker -g opsbroker -- /usr/local/libexec/ops-native-broker
+fi
+if [[ $EUID != $(/usr/bin/id -u opsbroker) ]]; then exit 77; fi
+exec /usr/bin/env -i PATH=/usr/bin:/usr/sbin LANG=C.UTF-8 \
+    OPS_BROKER_DATABASE=/var/lib/ops-broker/state.db \
+    OPS_BROKER_RUNBOOKS=/opt/ops-broker/runbooks \
+    OPS_BROKER_ACTION_POLICY=/etc/ops-broker/actions.yaml \
+    OPS_BROKER_RBAC_POLICY=/etc/ops-broker/rbac.yaml \
+    OPS_BROKER_EXECUTABLES_POLICY=/etc/ops-broker/executables.yaml \
+    OPS_BROKER_MCP_ACTOR_ID=native-observer \
+    /opt/ops-broker/venv/bin/ops-broker-mcp

@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dell-ops.local/schemas/model-catalog.v2.schema.json",
+  "title": "Dell Ops model catalogue v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "revision", "generated_at", "source", "normalization",
+    "comparison_profile", "capability_dimensions", "capability_profiles",
+    "capability_provenance", "model_id_provenance", "provider_accounts", "cards"
+  ],
+  "properties": {
+    "schema_version": {"const": 2},
+    "revision": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "source": {"type": "object"},
+    "normalization": {"type": "object"},
+    "comparison_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "calls", "input_tokens_per_call", "output_tokens_per_call",
+        "input_tokens_total", "output_tokens_total", "cache_hit_percent",
+        "batch", "currency", "taxes_included", "price_policy", "note"
+      ],
+      "properties": {
+        "id": {"type": "string"},
+        "calls": {"type": "integer", "minimum": 1, "maximum": 1000000000},
+        "input_tokens_per_call": {"type": "integer", "minimum": 0, "maximum": 1000000000},
+        "output_tokens_per_call": {"type": "integer", "minimum": 0, "maximum": 1000000000},
+        "input_tokens_total": {"type": "integer", "minimum": 0},
+        "output_tokens_total": {"type": "integer", "minimum": 0},
+        "cache_hit_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+        "batch": {"type": "boolean"},
+        "currency": {"const": "USD"},
+        "taxes_included": {"type": "boolean"},
+        "price_policy": {"type": "string"},
+        "note": {"type": "string"}
+      }
+    },
+    "capability_dimensions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z][a-z_]{0,31}$"}
+    },
+    "capability_profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {"type": "integer", "minimum": 0, "maximum": 10}
+      }
+    },
+    "capability_provenance": {"type": "object"},
+    "model_id_provenance": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["exact_model_id", "confidence", "source", "verified_on"],
+        "properties": {
+          "exact_model_id": {"type": "string", "minLength": 1, "maxLength": 200},
+          "confidence": {"const": "official_verified"},
+          "source": {"type": "string", "pattern": "^https://", "maxLength": 256},
+          "verified_on": {"type": "string", "format": "date"}
+        }
+      }
+    },
+    "provider_accounts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {"$ref": "#/$defs/providerAccount"}
+    },
+    "cards": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": {"$ref": "#/$defs/card"}
+    }
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$"},
+    "decimal": {"type": ["string", "null"], "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]{1,6})?$"},
+    "providerAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "name", "country", "credential_ref", "balance_mode",
+        "financial_capabilities"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 128},
+        "country": {"type": "string", "minLength": 1, "maxLength": 64},
+        "credential_ref": {"type": "string", "pattern": "^kv-infra-shared/data/llm/[a-z0-9/-]+$"},
+        "balance_mode": {"enum": ["unsupported", "unknown", "quota_only", "provider_dependent", "verified_balance"]},
+        "financial_capabilities": {"$ref": "#/$defs/financialCapabilities"}
+      }
+    },
+    "financialAccessMode": {
+      "enum": [
+        "direct_api", "admin_api", "cloud_billing_api", "console_only",
+        "not_applicable", "unknown"
+      ]
+    },
+    "financialCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cash_balance", "plan_quota", "usage", "cost", "rate_limits",
+        "spending_limit"
+      ],
+      "properties": {
+        "cash_balance": {"$ref": "#/$defs/financialAccessMode"},
+        "plan_quota": {"$ref": "#/$defs/financialAccessMode"},
+        "usage": {"$ref": "#/$defs/financialAccessMode"},
+        "cost": {"$ref": "#/$defs/financialAccessMode"},
+        "rate_limits": {"$ref": "#/$defs/financialAccessMode"},
+        "spending_limit": {"$ref": "#/$defs/financialAccessMode"}
+      }
+    },
+    "priceSchedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode", "region_scope", "input_usd_per_million",
+        "output_usd_per_million", "cached_input_usd_per_million",
+        "declared_simulation_usd", "confidence", "source"
+      ],
+      "properties": {
+        "mode": {"type": "string", "minLength": 1, "maxLength": 64},
+        "region_scope": {"type": "string", "minLength": 1, "maxLength": 128},
+        "input_usd_per_million": {"$ref": "#/$defs/decimal"},
+        "output_usd_per_million": {"$ref": "#/$defs/decimal"},
+        "cached_input_usd_per_million": {"$ref": "#/$defs/decimal"},
+        "declared_simulation_usd": {"type": "string", "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]{1,6})?$"},
+        "confidence": {"enum": [
+          "declared_unverified", "approximate", "revalidation_required",
+          "discussed_reference", "shared_source_price", "public_unverified",
+          "promotion_unverified", "official_verified"
+        ]},
+        "source": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "card": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "card_id", "display_name", "entity_kind", "provider_account_id",
+        "developer", "country", "description", "profile", "specialties",
+        "integration_stage", "deployment_ids", "exact_model_id", "source_lines",
+        "context_window_tokens", "languages", "limitations", "latency_p50_ms",
+        "latency_p95_ms", "technical_metadata_confidence",
+        "technical_metadata_source", "pricing"
+      ],
+      "properties": {
+        "card_id": {"$ref": "#/$defs/identifier"},
+        "display_name": {"type": "string", "minLength": 1, "maxLength": 160},
+        "entity_kind": {"enum": ["model", "family", "unresolved"]},
+        "provider_account_id": {"$ref": "#/$defs/identifier"},
+        "developer": {"type": "string", "minLength": 1, "maxLength": 128},
+        "country": {"type": "string", "minLength": 1, "maxLength": 64},
+        "description": {"type": "string", "minLength": 1, "maxLength": 512},
+        "profile": {"$ref": "#/$defs/identifier"},
+        "specialties": {
+          "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"}
+        },
+        "integration_stage": {"enum": ["catalogued", "configured", "quarantined"]},
+        "deployment_ids": {
+          "type": "array", "maxItems": 32, "uniqueItems": true,
+          "items": {"$ref": "#/$defs/identifier"}
+        },
+        "exact_model_id": {"type": ["string", "null"], "maxLength": 200},
+        "context_window_tokens": {
+          "type": ["integer", "null"], "minimum": 1, "maximum": 1000000000
+        },
+        "languages": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128}
+        },
+        "limitations": {
+          "type": "array", "maxItems": 32, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 512}
+        },
+        "latency_p50_ms": {
+          "type": ["integer", "null"], "minimum": 0, "maximum": 3600000
+        },
+        "latency_p95_ms": {
+          "type": ["integer", "null"], "minimum": 0, "maximum": 3600000
+        },
+        "technical_metadata_confidence": {
+          "enum": ["unknown", "source_declared_unverified", "official_verified", "observed"]
+        },
+        "technical_metadata_source": {"type": "string", "minLength": 1, "maxLength": 256},
+        "source_lines": {
+          "type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true,
+          "items": {"type": "integer", "minimum": 1, "maximum": 1000000}
+        },
+        "pricing": {
+          "type": "array", "maxItems": 32,
+          "items": {"$ref": "#/$defs/priceSchedule"}
+        }
+      }
+    }
+  }
+}

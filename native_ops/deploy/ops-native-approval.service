@@ -1,0 +1,26 @@
+[Unit]
+Description=Zulip approvals, mobile commands and deterministic notifications
+Requires=ops-native-approval-secrets.service zulip-alertmanager-query.socket
+After=ops-native-approval-secrets.service ops-broker.socket zulip-alertmanager-query.socket
+Conflicts=zulip-approval-bridge.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+[Service]
+User=zulipbridge
+Group=zulipbridge
+SupplementaryGroups=opsbroker-api ops-readers
+ExecStart=/opt/ops-native/venv/bin/python -m ops_native.approval
+StateDirectory=ops-native-approval
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=15
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+LimitCORE=0
+MemoryMax=256M
+[Install]
+WantedBy=multi-user.target

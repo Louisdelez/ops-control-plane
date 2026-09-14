@@ -1,0 +1,450 @@
+#!/usr/bin/python3
+"""Resolve provider and Hermes facade credentials into protected tmpfs.
+
+The runtime AppRole token has exactly 23 uses: 22 exact KV v2 reads (21 model
+provider accounts and the Hermes facade token) followed by revoke-self. Missing
+optional provider objects are skipped; malformed or unauthorized objects fail
+closed. No value is published until revocation succeeds. Files are staged in a
+private directory and become visible together through one directory rename, so
+consumers can never observe a partially published bundle.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import re
+import ssl
+import stat
+import sys
+import tempfile
+from types import MappingProxyType
+from typing import Any, Mapping
+import urllib.error
+import urllib.request
+
+
+BAO_ORIGIN = "https://127.0.0.1:8200"
+CA_FILE = Path("/etc/ops-orchestrator/openbao-ca.crt")
+PROVIDER_KV_PATHS = MappingProxyType(
+    {
+        "alibaba": ("/v1/kv-infra-shared/data/llm/qwen", "qwen-api-key"),
+        "z-ai": ("/v1/kv-infra-shared/data/llm/providers/z-ai", "z-ai-api-key"),
+        "mistral-ai": ("/v1/kv-infra-shared/data/llm/providers/mistral-ai", "mistral-ai-api-key"),
+        "deepseek": ("/v1/kv-infra-shared/data/llm/deepseek", "deepseek-api-key"),
+        "minimax": ("/v1/kv-infra-shared/data/llm/providers/minimax", "minimax-api-key"),
+        "google": ("/v1/kv-infra-shared/data/llm/providers/google", "google-api-key"),
+        "cohere": ("/v1/kv-infra-shared/data/llm/providers/cohere", "cohere-api-key"),
+        "moonshot": ("/v1/kv-infra-shared/data/llm/providers/moonshot", "moonshot-api-key"),
+        "tencent": ("/v1/kv-infra-shared/data/llm/providers/tencent", "tencent-api-key"),
+        "xai": ("/v1/kv-infra-shared/data/llm/providers/xai", "xai-api-key"),
+        "openai": ("/v1/kv-infra-shared/data/llm/providers/openai", "openai-api-key"),
+        "bytedance": ("/v1/kv-infra-shared/data/llm/providers/bytedance", "bytedance-api-key"),
+        "anthropic": ("/v1/kv-infra-shared/data/llm/providers/anthropic", "anthropic-api-key"),
+        "nvidia": ("/v1/kv-infra-shared/data/llm/providers/nvidia", "nvidia-api-key"),
+        "aws": ("/v1/kv-infra-shared/data/llm/providers/aws", "aws-api-key"),
+        "meta": ("/v1/kv-infra-shared/data/llm/providers/meta", "meta-api-key"),
+        "microsoft": ("/v1/kv-infra-shared/data/llm/providers/microsoft", "microsoft-api-key"),
+        "xiaomi": ("/v1/kv-infra-shared/data/llm/providers/xiaomi", "xiaomi-api-key"),
+        "baidu": ("/v1/kv-infra-shared/data/llm/providers/baidu", "baidu-api-key"),
+        "baichuan": ("/v1/kv-infra-shared/data/llm/providers/baichuan", "baichuan-api-key"),
+        "stepfun": ("/v1/kv-infra-shared/data/llm/providers/stepfun", "stepfun-api-key"),
+    }
+)
+QWEN_KV_PATH = PROVIDER_KV_PATHS["alibaba"][0]
+DEEPSEEK_KV_PATH = PROVIDER_KV_PATHS["deepseek"][0]
+HERMES_GATEWAY_KV_PATH = "/v1/kv-infra-shared/data/hermes/gateway"
+OUTPUT_DIRECTORY = Path("/run/ops-orchestrator-secrets/current")
+STAGING_DIRECTORY = Path("/run/ops-orchestrator-secrets/stage")
+OUTPUT_NAMES = tuple(value[1] for value in PROVIDER_KV_PATHS.values()) + (
+    "hermes-facade-token",
+)
+EXPECTED_OWNER = 0
+ROLE_ID_CREDENTIAL = "ops-orchestrator-openbao-role-id"
+SECRET_ID_CREDENTIAL = "ops-orchestrator-openbao-secret-id"
+MAX_RESPONSE_BYTES = 32 * 1024
+MAX_CREDENTIAL_BYTES = 512
+HTTP_TIMEOUT_SECONDS = 3.0
+
+_IDENTIFIER_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{15,127}\Z")
+_TOKEN_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._~-]{15,511}\Z")
+_API_KEY_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._~+/=-]{15,511}\Z")
+
+
+class ResolutionError(RuntimeError):
+    pass
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(  # type: ignore[override]
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        raise ResolutionError("OpenBao redirected a local request.")
+
+
+def _validated(value: Any, pattern: re.Pattern[str], description: str) -> str:
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        raise ResolutionError(f"OpenBao returned an invalid {description}.")
+    return value
+
+
+def _validate_regular(path: Path, *, owner: int, private: bool) -> os.stat_result:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise ResolutionError("A required protected file is unavailable.") from exc
+    forbidden = 0o077 if private else 0o022
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != owner
+        or stat.S_IMODE(info.st_mode) & forbidden
+    ):
+        raise ResolutionError("A required protected file is unsafe.")
+    return info
+
+
+def _validate_directory(path: Path, *, private: bool) -> None:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise ResolutionError("A required protected directory is unavailable.") from exc
+    forbidden = 0o077 if private else 0o022
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != EXPECTED_OWNER
+        or stat.S_IMODE(info.st_mode) & forbidden
+    ):
+        raise ResolutionError("A required protected directory is unsafe.")
+
+
+def _read_private(path: Path, maximum: int) -> str:
+    before = _validate_regular(path, owner=0, private=True)
+    descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(descriptor)
+        if opened.st_dev != before.st_dev or opened.st_ino != before.st_ino:
+            raise ResolutionError("A credential changed while it was read.")
+        raw = os.read(descriptor, maximum + 1)
+        if len(raw) > maximum or os.read(descriptor, 1):
+            raise ResolutionError("A credential is oversized.")
+    finally:
+        os.close(descriptor)
+    try:
+        return raw.rstrip(b"\r\n").decode("ascii", errors="strict")
+    except UnicodeError as exc:
+        raise ResolutionError("A credential has an invalid encoding.") from exc
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    _validate_regular(CA_FILE, owner=0, private=False)
+    context = ssl.create_default_context(cafile=str(CA_FILE))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+        urllib.request.HTTPSHandler(context=context),
+    )
+
+
+def _request(
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    token: str | None = None,
+    expect_json: bool = True,
+    allow_not_found: bool = False,
+) -> dict[str, Any] | None:
+    allowed_operations = {
+        ("POST", "/v1/auth/approle/login"),
+        ("GET", HERMES_GATEWAY_KV_PATH),
+        ("POST", "/v1/auth/token/revoke-self"),
+    }
+    allowed_operations.update(("GET", value[0]) for value in PROVIDER_KV_PATHS.values())
+    if (method, path) not in allowed_operations:
+        raise ResolutionError("An internal OpenBao request was rejected.")
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "ops-orchestrator-resolver/1",
+    }
+    body = None
+    if payload is not None or method == "POST":
+        body = json.dumps(payload or {}, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if token is not None:
+        headers["X-Vault-Token"] = _validated(token, _TOKEN_RE, "token")
+    request = urllib.request.Request(
+        BAO_ORIGIN + path, data=body, headers=headers, method=method
+    )
+    try:
+        with _opener().open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            allowed_statuses = {200} if expect_json else {200, 204}
+            if response.status not in allowed_statuses:
+                raise ResolutionError("OpenBao rejected the request.")
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        try:
+            exc.close()
+        except OSError:
+            pass
+        if allow_not_found and status == 404:
+            return None
+        raise ResolutionError("OpenBao rejected the request.") from None
+    except (OSError, ssl.SSLError, urllib.error.URLError) as exc:
+        raise ResolutionError("The local OpenBao request failed.") from exc
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ResolutionError("OpenBao returned an oversized response.")
+    if not expect_json:
+        return None
+    try:
+        result = json.loads(raw)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ResolutionError("OpenBao returned invalid JSON.") from exc
+    if not isinstance(result, dict):
+        raise ResolutionError("OpenBao returned an invalid document.")
+    return result
+
+
+def _extract_api_key(document: dict[str, Any], provider: str) -> str:
+    outer = document.get("data")
+    inner = outer.get("data") if isinstance(outer, dict) else None
+    if (
+        not isinstance(inner, dict)
+        or "api_key" not in inner
+        or not set(inner) <= {"api_key", "finance_api_key"}
+    ):
+        raise ResolutionError(f"The {provider} KV object is invalid.")
+    return _validated(inner.get("api_key"), _API_KEY_RE, f"{provider} API key")
+
+
+def _extract_hermes_facade_token(document: dict[str, Any]) -> str:
+    outer = document.get("data")
+    inner = outer.get("data") if isinstance(outer, dict) else None
+    if not isinstance(inner, dict):
+        raise ResolutionError("The Hermes gateway KV object is invalid.")
+    return _validated(
+        inner.get("orchestrator_api_key"),
+        _API_KEY_RE,
+        "Hermes orchestrator facade token",
+    )
+
+
+def _ensure_runtime_directories() -> None:
+    # Only the parent is a systemd bind mount. Bundle directories must be
+    # children of that mount so atomic rename cannot fail with EBUSY/EXDEV.
+    if OUTPUT_DIRECTORY.parent != STAGING_DIRECTORY.parent:
+        raise ResolutionError("Runtime bundle directories must share a parent.")
+    _validate_directory(OUTPUT_DIRECTORY.parent, private=True)
+    for directory in (OUTPUT_DIRECTORY, STAGING_DIRECTORY):
+        directory.mkdir(mode=0o700, exist_ok=True)
+        _validate_directory(directory, private=True)
+
+
+def _clear_secret_directory(path: Path) -> None:
+    _validate_directory(path, private=True)
+    for child in path.iterdir():
+        if child.name not in OUTPUT_NAMES:
+            raise ResolutionError("A runtime secret directory contains an unknown entry.")
+        _validate_regular(child, owner=EXPECTED_OWNER, private=True)
+        child.unlink()
+
+
+def _write_private(path: Path, value: str) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        os.fchmod(descriptor, 0o400)
+        encoded = (value + "\n").encode("ascii")
+        written = 0
+        while written < len(encoded):
+            written += os.write(descriptor, encoded[written:])
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(temporary_name, path)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+
+
+def _publish_bundle(provider_keys: Mapping[str, str], facade_token: str) -> None:
+    _validate_directory(OUTPUT_DIRECTORY.parent, private=False)
+    _validate_directory(OUTPUT_DIRECTORY, private=True)
+    _validate_directory(STAGING_DIRECTORY, private=True)
+    _clear_secret_directory(OUTPUT_DIRECTORY)
+    _clear_secret_directory(STAGING_DIRECTORY)
+
+    try:
+        if not set(provider_keys) <= set(OUTPUT_NAMES[:-1]):
+            raise ResolutionError("The provider credential bundle contains an unknown file.")
+        for name, value in sorted(provider_keys.items()):
+            _write_private(STAGING_DIRECTORY / name, value)
+        _write_private(STAGING_DIRECTORY / "hermes-facade-token", facade_token)
+        directory_fd = os.open(
+            STAGING_DIRECTORY, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+        # The live directory is empty here.  Removing it and renaming the fully
+        # staged directory exposes all values together and never a partial set.
+        OUTPUT_DIRECTORY.rmdir()
+        os.replace(STAGING_DIRECTORY, OUTPUT_DIRECTORY)
+        # The rename moves the staging directory inode.  Recreate the second
+        # staging child before reporting success so ExecStop and an explicit
+        # rerun can always clear both paths instead of failing on ENOENT.
+        STAGING_DIRECTORY.mkdir(mode=0o700)
+        parent_fd = os.open(
+            OUTPUT_DIRECTORY.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+        )
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    except BaseException:
+        for directory in (OUTPUT_DIRECTORY, STAGING_DIRECTORY):
+            try:
+                _clear_secret_directory(directory)
+            except (FileNotFoundError, ResolutionError):
+                pass
+        raise
+
+
+def resolve() -> None:
+    if os.geteuid() != 0:
+        raise ResolutionError("The resolver must run as root.")
+    credential_directory = os.environ.get("CREDENTIALS_DIRECTORY", "")
+    if not credential_directory or not os.path.isabs(credential_directory):
+        raise ResolutionError("The systemd credential directory is unavailable.")
+    credential_root = Path(credential_directory)
+    role_id = _validated(
+        _read_private(credential_root / ROLE_ID_CREDENTIAL, MAX_CREDENTIAL_BYTES),
+        _IDENTIFIER_RE,
+        "RoleID",
+    )
+    secret_id = _validated(
+        _read_private(credential_root / SECRET_ID_CREDENTIAL, MAX_CREDENTIAL_BYTES),
+        _IDENTIFIER_RE,
+        "SecretID",
+    )
+    _ensure_runtime_directories()
+    _clear_secret_directory(OUTPUT_DIRECTORY)
+    _clear_secret_directory(STAGING_DIRECTORY)
+
+    runtime_token: str | None = None
+    provider_keys: dict[str, str] = {}
+    facade_token: str | None = None
+    operation_error: BaseException | None = None
+    revocation_error: BaseException | None = None
+    try:
+        login = _request(
+            "POST",
+            "/v1/auth/approle/login",
+            payload={"role_id": role_id, "secret_id": secret_id},
+        )
+        role_id = secret_id = ""
+        auth = login.get("auth") if isinstance(login, dict) else None
+        if not isinstance(auth, dict):
+            raise ResolutionError("The orchestrator AppRole login failed.")
+        runtime_token = _validated(auth.get("client_token"), _TOKEN_RE, "token")
+        for provider_id, (kv_path, output_name) in PROVIDER_KV_PATHS.items():
+            provider_document = _request(
+                "GET",
+                kv_path,
+                token=runtime_token,
+                allow_not_found=True,
+            )
+            if provider_document is None:
+                continue
+            provider_keys[output_name] = _extract_api_key(
+                provider_document,
+                provider_id,
+            )
+            provider_document.clear()
+        gateway_document = _request(
+            "GET", HERMES_GATEWAY_KV_PATH, token=runtime_token
+        )
+        if not isinstance(gateway_document, dict):
+            raise ResolutionError("An orchestrator AppRole read failed.")
+        facade_token = _extract_hermes_facade_token(gateway_document)
+        gateway_document.clear()
+    except BaseException as exc:
+        operation_error = exc
+    finally:
+        if runtime_token is not None:
+            try:
+                _request(
+                    "POST",
+                    "/v1/auth/token/revoke-self",
+                    token=runtime_token,
+                    expect_json=False,
+                )
+            except BaseException as exc:
+                revocation_error = exc
+            runtime_token = None
+
+    if (
+        operation_error is not None
+        or revocation_error is not None
+        or facade_token is None
+    ):
+        provider_keys.clear()
+        facade_token = None
+        _clear_secret_directory(OUTPUT_DIRECTORY)
+        _clear_secret_directory(STAGING_DIRECTORY)
+        if revocation_error is not None:
+            raise ResolutionError("The AppRole token revocation could not be confirmed.")
+        if isinstance(operation_error, ResolutionError):
+            raise operation_error
+        raise ResolutionError("The provider key resolution failed.") from operation_error
+
+    # Deliberately after all exact reads and the confirmed revoke-self call.
+    _publish_bundle(provider_keys, facade_token)
+    provider_keys.clear()
+    facade_token = None
+
+
+def clear_runtime_credentials() -> None:
+    if os.geteuid() != 0:
+        raise ResolutionError("The resolver must run as root.")
+    _clear_secret_directory(OUTPUT_DIRECTORY)
+    _clear_secret_directory(STAGING_DIRECTORY)
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments not in ([], ["--clear"]):
+        print("ops-orchestrator-openbao-resolve: invalid arguments", file=sys.stderr)
+        return 2
+    try:
+        if arguments == ["--clear"]:
+            clear_runtime_credentials()
+        else:
+            resolve()
+    except (OSError, ResolutionError, ValueError) as exc:
+        print(f"ops-orchestrator-openbao-resolve: {exc}", file=sys.stderr)
+        return 1
+    if arguments == ["--clear"]:
+        print("ops-orchestrator-openbao-resolve: runtime credentials cleared")
+    else:
+        print("ops-orchestrator-openbao-resolve: provider credentials published in tmpfs")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

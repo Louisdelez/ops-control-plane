@@ -1,0 +1,193 @@
+[runtime]
+database_path = "/var/lib/ops-memory/memory.sqlite3"
+socket_path = "/run/ops-memory/ops-memory.sock"
+socket_group = "ops-memory-api"
+socket_mode = "0660"
+allow_degraded_reads = true
+allow_degraded_writes = true
+
+[limits]
+max_content_bytes = 131072
+candidate_limit = 20
+result_limit = 5
+fallback_scan_limit = 5000
+observation_ttl_days = 30
+stale_after_days = 365
+
+[qdrant]
+url = "http://127.0.0.1:6333"
+collection = "ops_memory_v1"
+timeout_seconds = 3.0
+api_key_env = ""
+api_key_credential = "qdrant-api-key"
+
+[embedding]
+dimensions = 256
+model_id = "ops-hash-embedding-v1"
+api_min_local_confidence = 0.35
+
+[embedding.api]
+enabled = false
+url = "https://provider.invalid/v1/embeddings"
+model = "configure-me"
+credential_env = ""
+credential_credential = "embedding-api-token"
+timeout_seconds = 5.0
+max_calls_per_operation = 1
+daily_call_budget = 0
+
+[reranker]
+model_id = "ops-lexical-reranker-v1"
+
+[reranker.api]
+enabled = false
+url = "https://provider.invalid/v1/rerank"
+model = "configure-me"
+credential_env = ""
+credential_credential = "reranker-api-token"
+timeout_seconds = 5.0
+max_calls_per_operation = 1
+daily_call_budget = 0
+
+# Each category names the external source(s) that can be authoritative. Even a
+# matching source is only tagged authoritative when the entry is reviewed.
+[source_truth]
+code = ["git"]
+documentation = ["git-docs"]
+production_version = ["deployment", "inventory"]
+current_state = ["monitoring"]
+communication = ["zulip"]
+workflow = ["hermes-db"]
+semantic_memory = ["qdrant"]
+
+[actors.hermes-coordinator]
+unix_users = ["hermesd"]
+roles = ["hermes-coordinator"]
+grantable_roles = ["hermes-coordinator", "minecraft-ops", "infra-shared", "network-shared", "monitoring-shared", "backup-shared", "deploy-ops", "security-ops"]
+projects = ["minecraft", "infra-shared", "network-shared", "monitoring-shared", "backup-shared"]
+environments = ["production", "staging", "development"]
+max_classification = "restricted"
+capabilities = ["read", "write", "summarize", "invalidate", "health", "stats", "review", "api-escalate"]
+source_types = ["hermes-db", "agent-observation", "memory-consolidation", "monitoring", "git", "git-docs", "deployment", "inventory"]
+authoritative_source_types = ["hermes-db"]
+
+[actors.minecraft-ops]
+unix_users = ["minecraft-ops"]
+roles = ["minecraft-ops"]
+grantable_roles = ["minecraft-ops"]
+projects = ["minecraft"]
+environments = ["production", "staging", "development"]
+max_classification = "restricted"
+capabilities = ["read", "write", "summarize", "health", "review"]
+source_types = ["agent-observation", "monitoring", "git-docs", "memory-consolidation"]
+authoritative_source_types = []
+
+[actors.infra-shared]
+unix_users = ["infra-network"]
+roles = ["infra-shared", "network-shared"]
+grantable_roles = ["infra-shared", "network-shared"]
+projects = ["infra-shared", "network-shared"]
+environments = ["production", "staging", "development"]
+max_classification = "restricted"
+capabilities = ["read", "write", "summarize", "health", "review"]
+source_types = ["agent-observation", "inventory", "git", "git-docs", "memory-consolidation"]
+authoritative_source_types = ["inventory"]
+
+[actors.network-shared]
+unix_users = ["infra-network"]
+roles = ["network-shared"]
+grantable_roles = ["network-shared"]
+projects = ["network-shared", "infra-shared"]
+environments = ["production", "staging", "development"]
+max_classification = "restricted"
+capabilities = ["read", "write", "summarize", "health", "review"]
+source_types = ["agent-observation", "inventory", "git-docs", "memory-consolidation"]
+authoritative_source_types = ["inventory"]
+
+[actors.monitoring-shared]
+unix_users = ["ops-monitor"]
+roles = ["monitoring-shared"]
+grantable_roles = ["monitoring-shared", "hermes-coordinator"]
+projects = ["minecraft", "infra-shared", "network-shared", "monitoring-shared", "backup-shared"]
+environments = ["production", "staging", "development"]
+max_classification = "restricted"
+capabilities = ["read", "write", "health", "stats", "review"]
+source_types = ["monitoring"]
+authoritative_source_types = ["monitoring"]
+
+[actors.backup-shared]
+unix_users = ["backup-agent"]
+roles = ["backup-shared"]
+grantable_roles = ["backup-shared", "hermes-coordinator"]
+projects = ["minecraft", "infra-shared", "backup-shared"]
+environments = ["production", "staging", "development"]
+max_classification = "restricted"
+capabilities = ["read", "write", "health", "review"]
+source_types = ["backup-tool", "agent-observation"]
+authoritative_source_types = ["backup-tool"]
+
+[actors.deploy-ops]
+unix_users = ["deploy-agent"]
+roles = ["deploy-ops"]
+grantable_roles = ["deploy-ops", "hermes-coordinator", "minecraft-ops"]
+projects = ["minecraft", "infra-shared"]
+environments = ["production", "staging", "development"]
+max_classification = "restricted"
+capabilities = ["read", "write", "summarize", "health", "review"]
+source_types = ["deployment", "inventory", "git", "memory-consolidation"]
+authoritative_source_types = ["deployment", "inventory", "git"]
+
+[actors.security-ops]
+unix_users = ["security-audit"]
+roles = ["security-ops"]
+grantable_roles = ["security-ops", "hermes-coordinator"]
+projects = ["minecraft", "infra-shared", "network-shared", "monitoring-shared", "backup-shared"]
+environments = ["production", "staging", "development"]
+max_classification = "confidential"
+capabilities = ["read", "write", "summarize", "invalidate", "health", "stats", "review", "api-escalate"]
+source_types = ["security-tool", "monitoring", "git", "git-docs", "agent-observation", "memory-consolidation"]
+authoritative_source_types = ["security-tool", "monitoring", "git"]
+
+[actors.zulip-bridge]
+unix_users = ["zulipbridge"]
+roles = ["human-communication"]
+grantable_roles = ["hermes-coordinator", "minecraft-ops", "infra-shared", "network-shared", "monitoring-shared", "backup-shared", "deploy-ops", "security-ops", "human-communication"]
+projects = ["minecraft", "infra-shared", "network-shared", "monitoring-shared", "backup-shared"]
+environments = ["production", "staging", "development"]
+max_classification = "restricted"
+capabilities = ["write", "health", "review"]
+source_types = ["zulip"]
+authoritative_source_types = ["zulip"]
+
+[actors.codex-supervised]
+unix_users = ["ops-user"]
+roles = ["hermes-coordinator", "minecraft-ops", "infra-shared", "network-shared", "monitoring-shared", "backup-shared", "deploy-ops", "security-ops", "human-communication"]
+grantable_roles = ["hermes-coordinator", "minecraft-ops", "infra-shared", "network-shared", "monitoring-shared", "backup-shared", "deploy-ops", "security-ops", "human-communication"]
+projects = ["minecraft", "infra-shared", "network-shared", "monitoring-shared", "backup-shared"]
+environments = ["production", "staging", "development"]
+max_classification = "confidential"
+capabilities = ["read", "write", "summarize", "invalidate", "health", "stats", "review", "api-escalate", "declassify", "reclassify"]
+source_types = ["git", "git-docs", "deployment", "inventory", "monitoring", "zulip", "security-tool", "backup-tool", "hermes-db", "agent-observation", "memory-consolidation"]
+authoritative_source_types = ["git", "git-docs", "deployment", "inventory", "monitoring", "zulip", "security-tool", "backup-tool", "hermes-db"]
+
+[actors.claude-supervised]
+unix_users = ["ops-user"]
+roles = ["hermes-coordinator", "minecraft-ops", "infra-shared", "network-shared", "monitoring-shared", "backup-shared", "deploy-ops", "security-ops", "human-communication"]
+grantable_roles = ["hermes-coordinator", "minecraft-ops", "infra-shared", "network-shared", "monitoring-shared", "backup-shared", "deploy-ops", "security-ops", "human-communication"]
+projects = ["minecraft", "infra-shared", "network-shared", "monitoring-shared", "backup-shared"]
+environments = ["production", "staging", "development"]
+max_classification = "confidential"
+capabilities = ["read", "write", "summarize", "invalidate", "health", "stats", "review", "api-escalate", "declassify", "reclassify"]
+source_types = ["git", "git-docs", "deployment", "inventory", "monitoring", "zulip", "security-tool", "backup-tool", "hermes-db", "agent-observation", "memory-consolidation"]
+authoritative_source_types = ["git", "git-docs", "deployment", "inventory", "monitoring", "zulip", "security-tool", "backup-tool", "hermes-db"]
+
+[actors.memory-maintenance]
+unix_users = ["opsmemory"]
+roles = ["memory-maintenance"]
+grantable_roles = ["memory-maintenance"]
+projects = ["*"]
+environments = ["*"]
+max_classification = "confidential"
+capabilities = ["maintenance", "health", "stats"]
+source_types = []
+authoritative_source_types = []

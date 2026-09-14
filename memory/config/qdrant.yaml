@@ -1,0 +1,14 @@
+log_level: WARN
+
+storage:
+  storage_path: /qdrant/storage
+  snapshots_path: /qdrant/storage/snapshots
+
+service:
+  host: 127.0.0.1
+  http_port: 6333
+  grpc_port: 6334
+  enable_tls: false
+  max_request_size_mb: 8
+
+telemetry_disabled: true

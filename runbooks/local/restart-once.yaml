@@ -1,0 +1,25 @@
+id: local.restart-once.v1
+version: 1
+project: infra-shared
+action_class: B
+description: Redemarrer une seule fois un service local explicitement autorise
+timeout_seconds: 45
+budget:
+  key: "restart:{incident_id}:{service}"
+  max_attempts: 1
+  window_seconds: 3600
+command:
+  argv:
+    - /usr/bin/sudo
+    - -n
+    - /usr/local/libexec/ops-runbooks/restart-service
+    - "{service}"
+parameters:
+  incident_id:
+    type: uuid
+  service:
+    type: enum
+    values: [ollama.service, ops-broker.service, hermes-gateway.service]
+output:
+  max_bytes: 16384
+  redact: true

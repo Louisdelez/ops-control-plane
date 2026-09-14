@@ -1,0 +1,18 @@
+# MCP is a byte-clean stdio protocol, hence the narrow !use_pty exception.
+# Every permitted argv fixes the broker identity; hermesd receives no generic
+# opsbroker shell and no permission to supply any other argument.
+Cmnd_Alias HERMES_OPS_BROKER_MCP = \
+    /usr/local/libexec/ops-broker-mcp-profile hermes-coordinator, \
+    /usr/local/libexec/ops-broker-mcp-profile minecraft-monitor, \
+    /usr/local/libexec/ops-broker-mcp-profile infra-operator, \
+    /usr/local/libexec/ops-broker-mcp-profile infra-network, \
+    /usr/local/libexec/ops-broker-mcp-profile monitoring-shared, \
+    /usr/local/libexec/ops-broker-mcp-profile backup-shared, \
+    /usr/local/libexec/ops-broker-mcp-profile deploy-ops, \
+    /usr/local/libexec/ops-broker-mcp-profile security-ops
+
+Defaults!HERMES_OPS_BROKER_MCP env_reset
+Defaults!HERMES_OPS_BROKER_MCP !use_pty
+Defaults!HERMES_OPS_BROKER_MCP env_delete += "BASH_ENV ENV CDPATH GLOBIGNORE SHELLOPTS BASHOPTS PYTHONPATH PYTHONHOME PYTHONINSPECT PYTHONSTARTUP"
+
+hermesd ALL=(opsbroker:opsbroker) NOPASSWD: HERMES_OPS_BROKER_MCP

@@ -1,0 +1,4 @@
+#!/usr/bin/bash
+set -Eeuo pipefail
+export PYTHONPATH=/opt/ops-memory/src
+exec /opt/ops-memory/mcp-venv/bin/python -m ops_memory.mcp_server

@@ -1,0 +1,696 @@
+#!/usr/bin/python3 -I
+"""Graphically confirm, enroll, then launch the reviewed root Atlas anchor."""
+
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import signal
+import stat
+import subprocess
+import sys
+from typing import Any
+
+
+RELEASE_ID = "atlas-api-zulip-2026.09.09.29"
+REVIEWED_LAUNCHER_SHA256 = "0975899d89952ceca5d921af36358175f26b0ca9719770025da1398081af48bf"
+SOURCE_ROOT = Path("/home/ops-user/ops-control-plane")
+SOURCES = (
+    (SOURCE_ROOT / "deploy/control-plane/release-manifest.v1.json", 2 * 1024 * 1024, 0o644, "manifest"),
+    (SOURCE_ROOT / "deploy/control-plane/bin/control-plane-bootstrap", 4 * 1024 * 1024, 0o755, "helper"),
+    (SOURCE_ROOT / "scripts/launch-atlas-reviewed-rpm", 512 * 1024, 0o755, "launcher"),
+    (SOURCE_ROOT / "AGENTS.md", 256 * 1024, 0o644, "authority"),
+    (SOURCE_ROOT / "scripts/install-atlas-trust-anchor", 512 * 1024, 0o755, "installer"),
+)
+ROOT_LAUNCHER = Path(
+    "/usr/local/lib/ops-control-plane/atlas-api-zulip-2026.09.08.11/launch-atlas-reviewed-rpm"
+)
+ANCHOR_ROOT = ROOT_LAUNCHER.parent
+ANCHOR_PARENT = ANCHOR_ROOT.parent
+STAGING_ROOT = ANCHOR_PARENT / f".{RELEASE_ID}.staging"
+HISTORY_PARENT = ANCHOR_PARENT / "history"
+HISTORY_ANCHOR = HISTORY_PARENT / f"{RELEASE_ID}.pre-reconciliation"
+INTERMEDIATE_HISTORY_ANCHOR = (
+    HISTORY_PARENT / f"{RELEASE_ID}.pre-second-reconciliation"
+)
+THIRD_HISTORY_ANCHOR = HISTORY_PARENT / f"{RELEASE_ID}.pre-third-reconciliation"
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+MAX_DIALOG_OUTPUT = 64 * 1024
+ROOT_UID = 0
+ROOT_GID = 0
+ANCHOR_FILES = {
+    "release-manifest.v1.json": (2 * 1024 * 1024, 0o444),
+    "control-plane-bootstrap": (4 * 1024 * 1024, 0o555),
+    "launch-atlas-reviewed-rpm": (512 * 1024, 0o555),
+}
+LEGACY_SHA256 = {
+    "release-manifest.v1.json": "7c2f67acfc761b37bd2e7b057ed8180b4e6450f099b2234437fa0ac0e301a5c9",
+    "control-plane-bootstrap": "52ed225f8260aa99b4c9e1a26c98bd1d817048e8cdc9ca18fe7d9ae4effc2a71",
+    "launch-atlas-reviewed-rpm": "3c2bf03dfc18b7141edc7c1841dd633267d4bf1808eaf72c1211fe6862bb6b72",
+}
+INTERMEDIATE_SHA256 = {
+    "release-manifest.v1.json": "e9917958ebc4b80901efcfa5c28defb3d747bc138a428e03eb0e18286a5dc982",
+    "control-plane-bootstrap": "10319e7988fa8fe3698b92a32739aeded3d341db1df1d43b474a14f8d8f3833c",
+    "launch-atlas-reviewed-rpm": "3c2bf03dfc18b7141edc7c1841dd633267d4bf1808eaf72c1211fe6862bb6b72",
+}
+PRE_THIRD_SHA256 = {
+    "release-manifest.v1.json": "af3ba2ca25e6f9f8c182314f85853cecff727cf14c1e70dfca1060e8849d7faf",
+    "control-plane-bootstrap": "6a12ae7aa8f16d208cabd79f268406db0bbdd235da4c884547a1170dcde98a8b",
+    "launch-atlas-reviewed-rpm": "3c2bf03dfc18b7141edc7c1841dd633267d4bf1808eaf72c1211fe6862bb6b72",
+}
+MANIFEST_KEYS = {
+    "schema_version",
+    "release_id",
+    "architecture",
+    "trust_anchor",
+    "bootstrap",
+    "supply_chain",
+    "host",
+    "cutover",
+    "source",
+    "artifacts",
+    "components",
+    "runtime",
+    "rollback",
+}
+
+
+class EnrollmentLaunchError(RuntimeError):
+    """Fail-closed graphical enrollment error."""
+
+
+def _duplicate_safe_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise EnrollmentLaunchError("Le manifeste contient une clé dupliquée.")
+        value[key] = item
+    return value
+
+
+def _read_source(path: Path, maximum: int, mode: int) -> bytes:
+    account = pwd.getpwuid(os.getuid())
+    descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != account.pw_uid
+            or before.st_gid != account.pw_gid
+            or stat.S_IMODE(before.st_mode) != mode
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > maximum
+        ):
+            raise EnrollmentLaunchError(f"Source locale non sûre : {path.name}")
+        chunks: list[bytes] = []
+        observed = 0
+        while observed <= maximum:
+            chunk = os.read(descriptor, min(1024 * 1024, maximum + 1 - observed))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            observed += len(chunk)
+        after = os.fstat(descriptor)
+        if (
+            observed != before.st_size
+            or after.st_dev != before.st_dev
+            or after.st_ino != before.st_ino
+            or after.st_size != before.st_size
+            or after.st_mtime_ns != before.st_mtime_ns
+            or after.st_ctime_ns != before.st_ctime_ns
+            or after.st_uid != before.st_uid
+            or after.st_gid != before.st_gid
+            or stat.S_IMODE(after.st_mode) != mode
+            or after.st_nlink != 1
+        ):
+            raise EnrollmentLaunchError(f"Source modifiée pendant la capture : {path.name}")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _seal_snapshot(raw: bytes, label: str) -> int:
+    descriptor = os.memfd_create(
+        f"atlas-anchor-{label}", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING
+    )
+    try:
+        view = memoryview(raw)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise EnrollmentLaunchError("La capture mémoire est incomplète.")
+            view = view[written:]
+        os.fchmod(descriptor, 0o400)
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        seals = (
+            fcntl.F_SEAL_WRITE
+            | fcntl.F_SEAL_GROW
+            | fcntl.F_SEAL_SHRINK
+            | fcntl.F_SEAL_SEAL
+        )
+        fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, seals)
+        if fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) != seals:
+            raise EnrollmentLaunchError("La capture mémoire n'est pas scellée.")
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _trusted_tool(path: str) -> str:
+    requested = Path(path)
+    resolved = requested.resolve(strict=True)
+    metadata = resolved.stat()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or metadata.st_mode & 0o022
+        or metadata.st_mode & 0o111 == 0
+        or resolved.parent != Path("/usr/bin")
+    ):
+        raise EnrollmentLaunchError(f"Outil système non sûr : {path}")
+    return path
+
+
+def _require_root_directory(path: Path, mode: int) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise EnrollmentLaunchError("L'ancre root existante est incomplète.") from exc
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != ROOT_UID
+        or metadata.st_gid != ROOT_GID
+        or stat.S_IMODE(metadata.st_mode) != mode
+    ):
+        raise EnrollmentLaunchError("L'ancre root existante n'est pas sûre.")
+
+
+def _read_root_file(path: Path, maximum: int, mode: int) -> bytes:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise EnrollmentLaunchError("L'ancre root existante est incomplète.") from exc
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != ROOT_UID
+            or before.st_gid != ROOT_GID
+            or stat.S_IMODE(before.st_mode) != mode
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > maximum
+        ):
+            raise EnrollmentLaunchError("Un fichier de l'ancre root n'est pas sûr.")
+        chunks: list[bytes] = []
+        observed = 0
+        while observed <= maximum:
+            chunk = os.read(descriptor, min(1024 * 1024, maximum + 1 - observed))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            observed += len(chunk)
+        after = os.fstat(descriptor)
+        if (
+            observed != before.st_size
+            or after.st_dev != before.st_dev
+            or after.st_ino != before.st_ino
+            or after.st_size != before.st_size
+            or after.st_mtime_ns != before.st_mtime_ns
+            or after.st_ctime_ns != before.st_ctime_ns
+            or after.st_uid != before.st_uid
+            or after.st_gid != before.st_gid
+            or stat.S_IMODE(after.st_mode) != mode
+            or after.st_nlink != 1
+        ):
+            raise EnrollmentLaunchError("L'ancre root a changé pendant sa lecture.")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _read_root_anchor(root: Path) -> dict[str, bytes]:
+    _require_root_directory(root, 0o555)
+    try:
+        entries = {entry.name for entry in os.scandir(root)}
+    except OSError as exc:
+        raise EnrollmentLaunchError("L'ancre root existante est illisible.") from exc
+    if entries != set(ANCHOR_FILES):
+        raise EnrollmentLaunchError("L'ancre root contient des fichiers inattendus.")
+    return {
+        name: _read_root_file(root / name, maximum, mode)
+        for name, (maximum, mode) in ANCHOR_FILES.items()
+    }
+
+
+def _is_legacy_anchor(payload: dict[str, bytes]) -> bool:
+    return all(
+        hashlib.sha256(payload[name]).hexdigest() == expected_digest
+        for name, expected_digest in LEGACY_SHA256.items()
+    )
+
+
+def _is_intermediate_anchor(payload: dict[str, bytes]) -> bool:
+    return all(
+        hashlib.sha256(payload[name]).hexdigest() == expected_digest
+        for name, expected_digest in INTERMEDIATE_SHA256.items()
+    )
+
+
+def _is_pre_third_anchor(payload: dict[str, bytes]) -> bool:
+    return all(
+        hashlib.sha256(payload[name]).hexdigest() == expected_digest
+        for name, expected_digest in PRE_THIRD_SHA256.items()
+    )
+
+
+def _validate_history() -> tuple[bool, bool, bool]:
+    if not os.path.lexists(HISTORY_PARENT):
+        return False, False, False
+    _require_root_directory(HISTORY_PARENT, 0o755)
+    try:
+        entries = {entry.name for entry in os.scandir(HISTORY_PARENT)}
+    except OSError as exc:
+        raise EnrollmentLaunchError("L'historique root est illisible.") from exc
+    allowed = {
+        HISTORY_ANCHOR.name,
+        INTERMEDIATE_HISTORY_ANCHOR.name,
+        THIRD_HISTORY_ANCHOR.name,
+    }
+    if not entries.issubset(allowed):
+        raise EnrollmentLaunchError("L'historique root contient un objet inattendu.")
+    legacy_present = HISTORY_ANCHOR.name in entries
+    intermediate_present = INTERMEDIATE_HISTORY_ANCHOR.name in entries
+    third_present = THIRD_HISTORY_ANCHOR.name in entries
+    if legacy_present and not _is_legacy_anchor(_read_root_anchor(HISTORY_ANCHOR)):
+        raise EnrollmentLaunchError("L'historique root ne contient pas l'ancienne ancre exacte.")
+    if intermediate_present and not _is_intermediate_anchor(
+        _read_root_anchor(INTERMEDIATE_HISTORY_ANCHOR)
+    ):
+        raise EnrollmentLaunchError(
+            "L'historique root ne contient pas l'ancre intermédiaire exacte."
+        )
+    if intermediate_present and not legacy_present:
+        raise EnrollmentLaunchError("L'historique root est incomplet.")
+    if third_present and not intermediate_present:
+        raise EnrollmentLaunchError("L'historique root de troisième réconciliation est incomplet.")
+    if third_present and not _is_pre_third_anchor(
+        _read_root_anchor(THIRD_HISTORY_ANCHOR)
+    ):
+        raise EnrollmentLaunchError(
+            "L'historique root ne contient pas la troisième ancre prédécesseur exacte."
+        )
+    return legacy_present, intermediate_present, third_present
+
+
+def _validate_existing_anchor() -> bool:
+    """Return true only when the root anchor is safe for a source-free launch.
+
+    Each pinned predecessor vector returns false so the physically confirmed
+    reconciliation path is entered.  A missing anchor plus exact history is the
+    supported crash frontier between the two durable directory renames.
+    """
+    if not os.path.lexists(ANCHOR_PARENT):
+        if any(
+            os.path.lexists(path)
+            for path in (
+                ANCHOR_ROOT,
+                ROOT_LAUNCHER,
+                HISTORY_PARENT,
+                HISTORY_ANCHOR,
+                INTERMEDIATE_HISTORY_ANCHOR,
+                THIRD_HISTORY_ANCHOR,
+            )
+        ):
+            raise EnrollmentLaunchError("L'ancre root existante est incomplète.")
+        return False
+    _require_root_directory(ANCHOR_PARENT, 0o755)
+    legacy_history, intermediate_history, third_history = _validate_history()
+    if not os.path.lexists(ANCHOR_ROOT):
+        if os.path.lexists(ROOT_LAUNCHER):
+            raise EnrollmentLaunchError("Le lanceur root existe sans son ancre.")
+        return False
+    payload = _read_root_anchor(ANCHOR_ROOT)
+    if _is_legacy_anchor(payload):
+        if legacy_history or intermediate_history or third_history:
+            raise EnrollmentLaunchError("L'ancienne ancre existe à deux emplacements.")
+        return False
+    if _is_intermediate_anchor(payload):
+        if not legacy_history or intermediate_history or third_history:
+            raise EnrollmentLaunchError("L'ancre intermédiaire existe dans un état inattendu.")
+        return False
+    if _is_pre_third_anchor(payload):
+        if not legacy_history or not intermediate_history or third_history:
+            raise EnrollmentLaunchError(
+                "La troisième ancre prédécesseur existe dans un état inattendu."
+            )
+        return False
+    _validate_snapshot_contract(
+        (
+            payload["release-manifest.v1.json"],
+            payload["control-plane-bootstrap"],
+            payload["launch-atlas-reviewed-rpm"],
+            b"",
+            b"",
+        )
+    )
+    if os.path.lexists(STAGING_ROOT):
+        raise EnrollmentLaunchError("Un staging inattendu subsiste après publication.")
+    if (legacy_history, intermediate_history, third_history) not in {
+        (False, False, False),
+        (True, False, False),
+        (True, True, False),
+        (True, True, True),
+    }:
+        raise EnrollmentLaunchError("L'historique root ne correspond pas à l'ancre publiée.")
+    return True
+
+
+def _graphical_environment() -> dict[str, str]:
+    account = pwd.getpwuid(os.getuid())
+    runtime = f"/run/user/{os.getuid()}"
+    environment = {
+        "HOME": account.pw_dir,
+        "USER": account.pw_name,
+        "LOGNAME": account.pw_name,
+        "PATH": "/usr/bin:/usr/sbin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "XDG_RUNTIME_DIR": runtime,
+    }
+    display = os.environ.get("DISPLAY", "")
+    if re.fullmatch(r":[0-9]{1,3}(?:\.[0-9]{1,3})?", display):
+        environment["DISPLAY"] = display
+    wayland = os.environ.get("WAYLAND_DISPLAY", "")
+    if re.fullmatch(r"wayland-[0-9]{1,3}", wayland):
+        environment["WAYLAND_DISPLAY"] = wayland
+    bus = Path(runtime) / "bus"
+    if bus.exists():
+        environment["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+    authority = os.environ.get("XAUTHORITY", "")
+    if authority.startswith(f"{runtime}/") and len(authority) <= 4096:
+        environment["XAUTHORITY"] = authority
+    if "DISPLAY" not in environment and "WAYLAND_DISPLAY" not in environment:
+        raise EnrollmentLaunchError("Aucune session graphique locale sûre n'est disponible.")
+    return environment
+
+
+def _confirmation_digest(nonce: str, snapshots: tuple[bytes, ...]) -> str:
+    identities = ":".join(hashlib.sha256(raw).hexdigest() for raw in snapshots)
+    return hashlib.sha256(
+        f"atlas-trust-anchor-v1:{RELEASE_ID}:{nonce}:{identities}".encode("ascii")
+    ).hexdigest()
+
+
+def _validate_snapshot_contract(snapshots: tuple[bytes, ...]) -> None:
+    manifest_raw, helper_raw, launcher_raw, _authority_raw, _installer_raw = snapshots
+    try:
+        manifest: Any = json.loads(
+            manifest_raw, object_pairs_hook=_duplicate_safe_object
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise EnrollmentLaunchError("Le manifeste Atlas est invalide.") from exc
+    if not isinstance(manifest, dict) or set(manifest) != MANIFEST_KEYS:
+        raise EnrollmentLaunchError("Le manifeste Atlas est invalide.")
+    if manifest.get("schema_version") != 1 or manifest.get("architecture") != "x86_64":
+        raise EnrollmentLaunchError("L'identité du manifeste Atlas est invalide.")
+    bootstrap = manifest.get("bootstrap")
+    anchor = manifest.get("trust_anchor")
+    expected_anchor = {
+        "version_directory": str(ANCHOR_ROOT),
+        "manifest_path": str(ANCHOR_ROOT / "release-manifest.v1.json"),
+        "bootstrap_helper_path": str(ANCHOR_ROOT / "control-plane-bootstrap"),
+        "launcher_path": str(ANCHOR_ROOT / "launch-atlas-reviewed-rpm"),
+        "manifest_mode": "0444",
+        "bootstrap_helper_mode": "0555",
+        "launcher_mode": "0555",
+        "launcher_sha256": hashlib.sha256(launcher_raw).hexdigest(),
+        "enrollment": "physical-polkit-tofu-v1",
+    }
+    if (
+        manifest.get("release_id") != RELEASE_ID
+        or not isinstance(bootstrap, dict)
+        or set(bootstrap)
+        != {
+            "mode",
+            "actor",
+            "helper_sha256",
+            "allowed_when",
+            "consumed_marker",
+            "state_root",
+            "approver_state",
+            "recovery_units",
+            "requires_provider_keys",
+            "rollback_keeps_recovered_userpass",
+            "gui_protocol",
+            "openbao",
+            "corrective",
+        }
+        or anchor != expected_anchor
+        or bootstrap.get("helper_sha256") != hashlib.sha256(helper_raw).hexdigest()
+        or hashlib.sha256(launcher_raw).hexdigest()
+        != REVIEWED_LAUNCHER_SHA256
+    ):
+        raise EnrollmentLaunchError("Les captures ne correspondent pas à la release revue.")
+    gui = bootstrap.get("gui_protocol")
+    artifacts = manifest.get("artifacts")
+    if (
+        bootstrap.get("mode") != "one-shot-local-physical"
+        or bootstrap.get("actor") != "codex-supervised"
+        or bootstrap.get("allowed_when") != "zulip-absent"
+        or not isinstance(gui, dict)
+        or set(gui)
+        != {
+            "schema_version",
+            "public_operations",
+            "apply_magic",
+            "control_magic",
+            "stdout",
+            "atlas_ancestry_required",
+            "launcher_mode",
+            "atlas_payload_member",
+            "atlas_payload_sha256",
+            "anonymous_pipes_required",
+            "mutation_boundary_event",
+            "secrets_outside_process_memory",
+        }
+        or not isinstance(artifacts, dict)
+        or set(artifacts) != {"atlas_rpm", "hermes_source_archive"}
+        or not isinstance(artifacts.get("atlas_rpm"), dict)
+        or gui.get("atlas_payload_sha256")
+        != artifacts["atlas_rpm"].get("payload_executable_sha256")
+        or SHA256_RE.fullmatch(str(gui.get("atlas_payload_sha256", ""))) is None
+    ):
+        raise EnrollmentLaunchError("Le contrat d'exécution Atlas est invalide.")
+    required_section_keys = {
+        "source": {"root", "roots", "tree_algorithm", "tree_sha256"},
+        "host": {"os", "docker"},
+        "cutover": {"local_inference"},
+        "runtime": {
+            "encrypted_credentials",
+            "zulip_owner_password_file",
+            "finance_isolation",
+            "provider_credential_scopes",
+            "provider_optional_credential_scopes",
+            "dynamic_services",
+            "services",
+        },
+        "rollback": {
+            "automatic_on_failure",
+            "explicit_last_transaction",
+            "zulip_restore_identity_file",
+            "secret_material_backed_up",
+        },
+    }
+    for section, keys in required_section_keys.items():
+        value = manifest.get(section)
+        if not isinstance(value, dict) or set(value) != keys:
+            raise EnrollmentLaunchError(f"La section Atlas diffère : {section}")
+    for raw, label, markers in (
+        (
+            helper_raw,
+            "bootstrap",
+            (b"gui-corrective-preflight", b"def main() -> int:"),
+        ),
+        (
+            launcher_raw,
+            "launcher",
+            (b"def prepare_reviewed_payload(", b"os.execve(executable"),
+        ),
+    ):
+        if (
+            not raw.startswith(b"#!/usr/bin/python3 -I\n")
+            or b"\x00" in raw
+            or any(marker not in raw for marker in markers)
+        ):
+            raise EnrollmentLaunchError(f"Le programme Atlas est invalide : {label}")
+        try:
+            compile(
+                raw.decode("utf-8"),
+                f"<atlas-{label}>",
+                "exec",
+                dont_inherit=True,
+                optimize=2,
+            )
+        except (SyntaxError, UnicodeDecodeError, ValueError) as exc:
+            raise EnrollmentLaunchError(
+                f"Le programme Atlas n'est pas exécutable : {label}"
+            ) from exc
+
+
+def _bounded_run(command: list[str], environment: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
+    completed = subprocess.run(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=600,
+        env=environment,
+        cwd="/",
+        start_new_session=True,
+    )
+    if len(completed.stdout) > MAX_DIALOG_OUTPUT or len(completed.stderr) > MAX_DIALOG_OUTPUT:
+        raise EnrollmentLaunchError("La réponse d'enrôlement dépasse la limite sûre.")
+    return completed
+
+
+def main() -> int:
+    if os.geteuid() != os.getuid() or os.getuid() == 0 or len(sys.argv) != 1:
+        raise EnrollmentLaunchError("L'enrôlement doit partir de la session graphique locale.")
+    environment = _graphical_environment()
+    if _validate_existing_anchor():
+        os.chdir("/")
+        os.execve(str(ROOT_LAUNCHER), [str(ROOT_LAUNCHER)], environment)
+        raise EnrollmentLaunchError("Atlas n'a pas pu repartir de l'ancre root existante.")
+    reconciliation = any(
+        os.path.lexists(path)
+        for path in (
+            ANCHOR_ROOT,
+            HISTORY_ANCHOR,
+            INTERMEDIATE_HISTORY_ANCHOR,
+            THIRD_HISTORY_ANCHOR,
+        )
+    )
+    third_reconciliation = os.path.lexists(THIRD_HISTORY_ANCHOR)
+    second_reconciliation = third_reconciliation or os.path.lexists(
+        INTERMEDIATE_HISTORY_ANCHOR
+    )
+    if os.path.lexists(ANCHOR_ROOT):
+        anchor_payload = _read_root_anchor(ANCHOR_ROOT)
+        if _is_pre_third_anchor(anchor_payload):
+            third_reconciliation = True
+            second_reconciliation = True
+        elif _is_intermediate_anchor(anchor_payload):
+            second_reconciliation = True
+    snapshots = tuple(_read_source(path, maximum, mode) for path, maximum, mode, _ in SOURCES)
+    _validate_snapshot_contract(snapshots)
+    descriptors = tuple(
+        _seal_snapshot(raw, label)
+        for raw, (_, _, _, label) in zip(snapshots, SOURCES, strict=True)
+    )
+    nonce = os.urandom(16).hex()
+    digest = _confirmation_digest(nonce, snapshots)
+    hashes = [hashlib.sha256(raw).hexdigest() for raw in snapshots]
+    action = (
+        "Atlas va réconcilier l’ancre root et archiver l’ancienne sans la modifier."
+        if reconciliation
+        else "Atlas va créer une ancre locale protégée par root."
+    )
+    if third_reconciliation:
+        previous = PRE_THIRD_SHA256
+        history_target = THIRD_HISTORY_ANCHOR
+    elif second_reconciliation:
+        previous = INTERMEDIATE_SHA256
+        history_target = INTERMEDIATE_HISTORY_ANCHOR
+    else:
+        previous = LEGACY_SHA256
+        history_target = HISTORY_ANCHOR
+    transition = (
+        f"\nAncien manifest : {previous['release-manifest.v1.json']}"
+        f"\nAncien helper : {previous['control-plane-bootstrap']}"
+        f"\nAncien lanceur : {previous['launch-atlas-reviewed-rpm']}"
+        f"\nHistorique : {history_target}\n"
+        if reconciliation
+        else ""
+    )
+    message = (
+        f"{action}\n\n"
+        f"Release : {RELEASE_ID}\n"
+        f"Nouveau manifest : {hashes[0]}\n"
+        f"Nouveau helper : {hashes[1]}\n"
+        f"Nouveau lanceur : {hashes[2]}\n"
+        f"{transition}"
+        f"Confirmation : {digest[-12:]}\n\n"
+        "Aucun mot de passe applicatif n'est demandé à cette étape."
+    )
+    zenity = _trusted_tool("/usr/bin/zenity")
+    pkexec = _trusted_tool("/usr/bin/pkexec")
+    python = _trusted_tool("/usr/bin/python3.14")
+    try:
+        confirmation = _bounded_run(
+            [
+                zenity,
+                "--question",
+                "--title=Préparation sécurisée Atlas",
+                f"--text={message}",
+                "--width=720",
+                "--ok-label=Réconcilier l’ancre sécurisée"
+                if reconciliation
+                else "--ok-label=Installer l’ancre sécurisée",
+                "--cancel-label=Annuler",
+            ],
+            environment,
+        )
+        if confirmation.returncode != 0:
+            return 1
+        parent_pid = os.getpid()
+        installer_fd = descriptors[4]
+        command = [
+            pkexec,
+            python,
+            "-I",
+            f"/proc/{parent_pid}/fd/{installer_fd}",
+            str(parent_pid),
+            *(str(descriptor) for descriptor in descriptors),
+            nonce,
+            digest,
+        ]
+        enrolled = _bounded_run(command, environment)
+        if enrolled.returncode != 0:
+            detail = enrolled.stderr.decode("utf-8", "replace")[:2000]
+            _bounded_run(
+                [
+                    zenity,
+                    "--error",
+                    "--title=Préparation Atlas interrompue",
+                    f"--text={detail or 'L’ancre sécurisée n’a pas été publiée.'}",
+                    "--width=640",
+                ],
+                environment,
+            )
+            return 1
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
+    if not _validate_existing_anchor():
+        raise EnrollmentLaunchError("L'ancre root réconciliée n'est pas publiable.")
+    os.chdir("/")
+    os.execve(str(ROOT_LAUNCHER), [str(ROOT_LAUNCHER)], environment)
+    raise EnrollmentLaunchError("Atlas n'a pas pu être relancé depuis l'ancre root.")
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (EnrollmentLaunchError, OSError, subprocess.TimeoutExpired) as exc:
+        print(f"Préparation Atlas impossible : {exc}", file=sys.stderr)
+        raise SystemExit(1) from None

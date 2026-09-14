@@ -1,0 +1,16 @@
+[backup]
+database_path = "/var/lib/ops-memory/memory.sqlite3"
+destination = "/var/backups/ops-memory"
+retention_count = 14
+max_snapshot_bytes = 8589934592
+
+[qdrant]
+url = "http://127.0.0.1:6333"
+collection = "ops_memory_v1"
+credential_name = "qdrant-api-key"
+timeout_seconds = 60.0
+
+[restore_test]
+image_env = "/etc/ops-memory/qdrant.env"
+timeout_seconds = 300.0
+minimum_free_bytes = 2147483648

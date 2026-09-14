@@ -1,0 +1,42 @@
+[Unit]
+Description=Consolidate and reindex Ops semantic memory
+After=ops-memory-secrets.service ops-memory-qdrant.service
+Requires=ops-memory-secrets.service
+Wants=ops-memory-qdrant.service
+ConditionPathExists=/etc/ops-memory/memory.toml
+
+[Service]
+Type=oneshot
+User=opsmemory
+Group=opsmemory
+UMask=0077
+StateDirectory=ops-memory
+StateDirectoryMode=0700
+LoadCredential=qdrant-api-key:/run/ops-memory-secrets/qdrant-api-key
+ExecStartPre=/opt/ops-memory/bin/ops-memory-openbao-preflight
+ExecStart=/opt/ops-memory/bin/ops-memory maintain --config /etc/ops-memory/memory.toml --actor memory-maintenance
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/ops-memory
+TimeoutStartSec=15min
+MemoryMax=512M
+TasksMax=128

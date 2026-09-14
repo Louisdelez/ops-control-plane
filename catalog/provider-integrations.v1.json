@@ -1,0 +1,501 @@
+{
+  "schema_version": 1,
+  "revision": "provider-integrations-2026-09-05.1",
+  "verified_on": "2026-09-05",
+  "finance_capability_names": ["cash_balance", "plan_quota", "usage", "cost", "rate_limits", "spending_limit"],
+  "finance_access_modes": ["direct_api", "admin_api", "cloud_billing_api", "console_only", "not_applicable", "unknown"],
+  "provider_accounts": [
+    {
+      "id": "alibaba",
+      "display_name": "Alibaba Cloud Model Studio",
+      "inference": {
+        "protocols": ["openai_compatible", "dashscope_native", "anthropic_compatible"],
+        "sites": [
+          {"id": "singapore-global", "region": "ap-southeast-1", "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "status": "documented"},
+          {"id": "regional-workspace", "region": "provider-selected", "base_url": "https://{workspace_id}.{region}.maas.aliyuncs.com/compatible-mode/v1", "status": "template"}
+        ],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://dashscope-intl.aliyuncs.com/api/v1/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/qwen", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": "kv-infra-shared/data/llm-admin/providers/alibaba", "auth_scheme": "alibaba_rpc_signature", "header_name": null, "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "cloud_billing_api", "plan_quota": "unknown", "usage": "cloud_billing_api", "cost": "cloud_billing_api", "rate_limits": "console_only", "spending_limit": "unknown"},
+      "finance_endpoints": [
+        {"capabilities": ["cash_balance"], "access": "cloud_billing_api", "method": "POST", "endpoint": "https://business.aliyuncs.com", "operation": "QueryAccountBalance", "credential_scope": "admin_finance"},
+        {"capabilities": ["usage", "cost"], "access": "cloud_billing_api", "method": "POST", "endpoint": "https://business.aliyuncs.com", "operation": "QueryBill", "credential_scope": "admin_finance"}
+      ],
+      "official_sources": [
+        {"title": "Model Studio API keys and regions", "url": "https://www.alibabacloud.com/help/en/model-studio/get-api-key", "verified_on": "2026-09-05"},
+        {"title": "ListModels", "url": "https://www.alibabacloud.com/help/en/model-studio/list-models", "verified_on": "2026-09-05"},
+        {"title": "QueryAccountBalance", "url": "https://www.alibabacloud.com/help/en/user-center/developer-reference/api-bssopenapi-2017-12-14-queryaccountbalance", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["Inference endpoints and keys are scoped to a region or workspace.", "The billing identity must be separate and read-only."]
+    },
+    {
+      "id": "z-ai",
+      "display_name": "Z.ai / Zhipu",
+      "inference": {
+        "protocols": ["openai_compatible", "anthropic_compatible"],
+        "sites": [
+          {"id": "general", "region": "global", "base_url": "https://api.z.ai/api/paas/v4", "status": "documented"},
+          {"id": "coding-plan", "region": "global", "base_url": "https://api.z.ai/api/coding/paas/v4", "status": "documented"}
+        ],
+        "model_discovery": {"mode": "unverified", "method": null, "endpoint": null, "operation": null, "credential_scope": "none"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/z-ai", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": null, "auth_scheme": "none", "header_name": null, "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "console_only", "plan_quota": "console_only", "usage": "console_only", "cost": "console_only", "rate_limits": "console_only", "spending_limit": "console_only"},
+      "finance_endpoints": [],
+      "official_sources": [
+        {"title": "Chat completion", "url": "https://docs.z.ai/api-reference/llm/chat-completion", "verified_on": "2026-09-05"},
+        {"title": "Rate limits", "url": "https://docs.z.ai/api-reference/rate-limit", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["General and Coding Plan keys and base URLs are not interchangeable.", "No public model-list or account-balance endpoint was verified."]
+    },
+    {
+      "id": "mistral-ai",
+      "display_name": "Mistral AI",
+      "inference": {
+        "protocols": ["openai_compatible"],
+        "sites": [{"id": "global", "region": "global", "base_url": "https://api.mistral.ai/v1", "status": "documented"}],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://api.mistral.ai/v1/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/mistral-ai", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": "kv-infra-shared/data/llm-admin/providers/mistral-ai", "auth_scheme": "x_api_key", "header_name": "x-api-key", "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "console_only", "plan_quota": "not_applicable", "usage": "admin_api", "cost": "admin_api", "rate_limits": "admin_api", "spending_limit": "admin_api"},
+      "finance_endpoints": [
+        {"capabilities": ["usage", "cost"], "access": "admin_api", "method": "GET", "endpoint": "https://api.mistral.ai/v1/admin/usage", "operation": null, "credential_scope": "admin_finance"},
+        {"capabilities": ["rate_limits"], "access": "admin_api", "method": "GET", "endpoint": "https://api.mistral.ai/v1/admin/rate-limit", "operation": null, "credential_scope": "admin_finance"},
+        {"capabilities": ["spending_limit"], "access": "admin_api", "method": "GET", "endpoint": "https://api.mistral.ai/v1/admin/spend-limit", "operation": null, "credential_scope": "admin_finance"}
+      ],
+      "official_sources": [
+        {"title": "Models API", "url": "https://docs.mistral.ai/api/endpoint/models", "verified_on": "2026-09-05"},
+        {"title": "Admin usage metrics", "url": "https://docs.mistral.ai/admin/admin-api/usage-metrics", "verified_on": "2026-09-05"},
+        {"title": "Billing and usage", "url": "https://docs.mistral.ai/admin/billing-usage/billing", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["Credit balance remains console-only.", "Family labels such as Small or Large must be resolved to a current alias or pinned version."]
+    },
+    {
+      "id": "deepseek",
+      "display_name": "DeepSeek",
+      "inference": {
+        "protocols": ["openai_compatible", "anthropic_compatible"],
+        "sites": [{"id": "global", "region": "global", "base_url": "https://api.deepseek.com", "status": "documented"}],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://api.deepseek.com/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/deepseek", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": null, "auth_scheme": "none", "header_name": null, "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "direct_api", "plan_quota": "not_applicable", "usage": "unknown", "cost": "unknown", "rate_limits": "unknown", "spending_limit": "unknown"},
+      "finance_endpoints": [{"capabilities": ["cash_balance"], "access": "direct_api", "method": "GET", "endpoint": "https://api.deepseek.com/user/balance", "operation": null, "credential_scope": "inference"}],
+      "official_sources": [
+        {"title": "List models", "url": "https://api-docs.deepseek.com/api/list-models/", "verified_on": "2026-09-05"},
+        {"title": "Get user balance", "url": "https://api-docs.deepseek.com/api/get-user-balance/", "verified_on": "2026-09-05"},
+        {"title": "Error codes", "url": "https://api-docs.deepseek.com/quick_start/error_codes/", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["The balance endpoint is account-scoped, not model-scoped.", "No aggregate usage or spending-limit endpoint was verified."]
+    },
+    {
+      "id": "minimax",
+      "display_name": "MiniMax",
+      "inference": {
+        "protocols": ["openai_compatible", "anthropic_compatible"],
+        "sites": [
+          {"id": "global", "region": "global", "base_url": "https://api.minimax.io/v1", "status": "documented"},
+          {"id": "china", "region": "cn", "base_url": "https://api.minimaxi.com/v1", "status": "documented"}
+        ],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://api.minimax.io/v1/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/minimax", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": null, "auth_scheme": "none", "header_name": null, "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "console_only", "plan_quota": "direct_api", "usage": "console_only", "cost": "console_only", "rate_limits": "console_only", "spending_limit": "console_only"},
+      "finance_endpoints": [{"capabilities": ["plan_quota"], "access": "direct_api", "method": "GET", "endpoint": "https://www.minimax.io/v1/token_plan/remains", "operation": null, "credential_scope": "inference"}],
+      "official_sources": [
+        {"title": "List models", "url": "https://platform.minimax.io/docs/api-reference/models/openai/list-models", "verified_on": "2026-09-05"},
+        {"title": "Token Plan FAQ", "url": "https://platform.minimax.io/docs/token-plan/faq", "verified_on": "2026-09-05"},
+        {"title": "Account FAQ", "url": "https://platform.minimax.io/docs/faq/about-account", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["Pay-as-you-go and Token Plan keys are not interchangeable.", "The quota endpoint applies only to Token Plan credentials."]
+    },
+    {
+      "id": "google",
+      "display_name": "Google Gemini",
+      "inference": {
+        "protocols": ["gemini_native", "openai_compatible"],
+        "sites": [
+          {"id": "native", "region": "global", "base_url": "https://generativelanguage.googleapis.com/v1beta", "status": "documented"},
+          {"id": "openai-compat", "region": "global", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "status": "documented"}
+        ],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://generativelanguage.googleapis.com/v1beta/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/google", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": "kv-infra-shared/data/llm-admin/providers/google", "auth_scheme": "google_oauth2", "header_name": "Authorization", "value_prefix": "Bearer "}
+      },
+      "financial_capabilities": {"cash_balance": "not_applicable", "plan_quota": "not_applicable", "usage": "cloud_billing_api", "cost": "cloud_billing_api", "rate_limits": "cloud_billing_api", "spending_limit": "cloud_billing_api"},
+      "finance_endpoints": [],
+      "official_sources": [
+        {"title": "Gemini Models API", "url": "https://ai.google.dev/api/models", "verified_on": "2026-09-05"},
+        {"title": "OpenAI compatibility", "url": "https://ai.google.dev/gemini-api/docs/openai", "verified_on": "2026-09-05"},
+        {"title": "Gemini API rate limits", "url": "https://ai.google.dev/gemini-api/docs/rate-limits", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["The OpenAI-compatible endpoint uses bearer authentication; native Gemini operations use x-goog-api-key.", "Limits are project-scoped rather than API-key-scoped.", "Billing data requires separate Google Cloud IAM and billing data access."]
+    },
+    {
+      "id": "cohere",
+      "display_name": "Cohere",
+      "inference": {
+        "protocols": ["cohere_v2", "openai_compatible"],
+        "sites": [
+          {"id": "native", "region": "global", "base_url": "https://api.cohere.com", "status": "documented"},
+          {"id": "openai-compat", "region": "global", "base_url": "https://api.cohere.ai/compatibility/v1", "status": "documented"}
+        ],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://api.cohere.com/v1/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/cohere", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": null, "auth_scheme": "none", "header_name": null, "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "console_only", "plan_quota": "unknown", "usage": "console_only", "cost": "console_only", "rate_limits": "console_only", "spending_limit": "console_only"},
+      "finance_endpoints": [],
+      "official_sources": [
+        {"title": "Compatibility API", "url": "https://docs.cohere.com/docs/compatibility-api", "verified_on": "2026-09-05"},
+        {"title": "List models", "url": "https://docs.cohere.com/reference/list-models", "verified_on": "2026-09-05"},
+        {"title": "Model deprecations", "url": "https://docs.cohere.com/docs/deprecations", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["Aggregate usage and cash balance are not exposed by a verified public endpoint.", "c4ai-aya-expanse-8b was retired on 2026-04-04."]
+    },
+    {
+      "id": "moonshot",
+      "display_name": "Moonshot AI / Kimi",
+      "inference": {
+        "protocols": ["openai_compatible"],
+        "sites": [
+          {"id": "global", "region": "global", "base_url": "https://api.moonshot.ai/v1", "status": "documented"},
+          {"id": "china", "region": "cn", "base_url": "https://api.moonshot.cn/v1", "status": "documented"}
+        ],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://api.moonshot.ai/v1/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/moonshot", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": null, "auth_scheme": "none", "header_name": null, "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "direct_api", "plan_quota": "not_applicable", "usage": "console_only", "cost": "console_only", "rate_limits": "console_only", "spending_limit": "unknown"},
+      "finance_endpoints": [{"capabilities": ["cash_balance"], "access": "direct_api", "method": "GET", "endpoint": "https://api.moonshot.ai/v1/users/me/balance", "operation": null, "credential_scope": "inference"}],
+      "official_sources": [
+        {"title": "List models", "url": "https://platform.kimi.ai/docs/api/list-models", "verified_on": "2026-09-05"},
+        {"title": "Balance", "url": "https://platform.kimi.ai/docs/api/balance", "verified_on": "2026-09-05"},
+        {"title": "Rate limits", "url": "https://platform.kimi.ai/docs/pricing/limits", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["China and global accounts and credentials are independent.", "K2.x remains an unresolved family label and must not be invoked as an ID."]
+    },
+    {
+      "id": "tencent",
+      "display_name": "Tencent Cloud TokenHub",
+      "inference": {
+        "protocols": ["openai_compatible", "anthropic_compatible"],
+        "sites": [
+          {"id": "guangzhou", "region": "ap-guangzhou", "base_url": "https://tokenhub.tencentmaas.com", "status": "documented"},
+          {"id": "singapore-global", "region": "ap-singapore", "base_url": "https://tokenhub-intl.tencentmaas.com", "status": "documented"}
+        ],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://tokenhub.tencentmaas.com/v1/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/tencent", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": "kv-infra-shared/data/llm-admin/providers/tencent", "auth_scheme": "tencent_tc3_hmac", "header_name": "Authorization", "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "unknown", "plan_quota": "admin_api", "usage": "admin_api", "cost": "cloud_billing_api", "rate_limits": "admin_api", "spending_limit": "admin_api"},
+      "finance_endpoints": [
+        {"capabilities": ["plan_quota", "rate_limits", "spending_limit"], "access": "admin_api", "method": "POST", "endpoint": "https://tokenhub.tencentcloudapi.com", "operation": "DescribeModelQuota,DescribeTokenPlan", "credential_scope": "admin_finance"},
+        {"capabilities": ["usage"], "access": "admin_api", "method": "POST", "endpoint": "https://tokenhub.tencentcloudapi.com", "operation": "DescribeUsageRankList", "credential_scope": "admin_finance"}
+      ],
+      "official_sources": [
+        {"title": "TokenHub API compatibility", "url": "https://cloud.tencent.com/document/product/1823/130078", "verified_on": "2026-09-05"},
+        {"title": "TokenHub management API", "url": "https://cloud.tencent.com/document/api/1823/132289", "verified_on": "2026-09-05"},
+        {"title": "TokenHub usage", "url": "https://cloud.tencent.com/document/product/1823/130088", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["Sites are isolated and cross-site requests are unsupported.", "Cash balance was not confirmed; plan quota must not be presented as cash."]
+    },
+    {
+      "id": "xai",
+      "display_name": "xAI",
+      "inference": {
+        "protocols": ["openai_compatible"],
+        "sites": [{"id": "global", "region": "global", "base_url": "https://api.x.ai/v1", "status": "documented"}],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://api.x.ai/v1/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/xai", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": "kv-infra-shared/data/llm-admin/providers/xai", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "}
+      },
+      "financial_capabilities": {"cash_balance": "admin_api", "plan_quota": "not_applicable", "usage": "admin_api", "cost": "admin_api", "rate_limits": "admin_api", "spending_limit": "admin_api"},
+      "finance_endpoints": [
+        {"capabilities": ["cash_balance"], "access": "admin_api", "method": "GET", "endpoint": "https://management-api.x.ai/v1/billing/teams/{team_id}/prepaid/balance", "operation": null, "credential_scope": "admin_finance"},
+        {"capabilities": ["usage", "cost"], "access": "admin_api", "method": "POST", "endpoint": "https://management-api.x.ai/v1/billing/teams/{team_id}/usage", "operation": null, "credential_scope": "admin_finance"}
+      ],
+      "official_sources": [
+        {"title": "Inference models", "url": "https://docs.x.ai/developers/rest-api-reference/inference/models", "verified_on": "2026-09-05"},
+        {"title": "Management billing", "url": "https://docs.x.ai/developers/rest-api-reference/management/billing", "verified_on": "2026-09-05"},
+        {"title": "Rate limits", "url": "https://docs.x.ai/developers/rate-limits", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["The management key and team identifier are distinct from the inference key.", "Model limits are team-, tier-, and model-scoped."]
+    },
+    {
+      "id": "openai",
+      "display_name": "OpenAI",
+      "inference": {
+        "protocols": ["openai_native"],
+        "sites": [{"id": "global", "region": "global", "base_url": "https://api.openai.com/v1", "status": "documented"}],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://api.openai.com/v1/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/openai", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": "kv-infra-shared/data/llm-admin/providers/openai", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "}
+      },
+      "financial_capabilities": {"cash_balance": "console_only", "plan_quota": "not_applicable", "usage": "admin_api", "cost": "admin_api", "rate_limits": "admin_api", "spending_limit": "console_only"},
+      "finance_endpoints": [
+        {"capabilities": ["usage"], "access": "admin_api", "method": "GET", "endpoint": "https://api.openai.com/v1/organization/usage/completions", "operation": null, "credential_scope": "admin_finance"},
+        {"capabilities": ["cost"], "access": "admin_api", "method": "GET", "endpoint": "https://api.openai.com/v1/organization/costs", "operation": null, "credential_scope": "admin_finance"}
+      ],
+      "official_sources": [
+        {"title": "List models", "url": "https://developers.openai.com/api/reference/resources/models/methods/list", "verified_on": "2026-09-05"},
+        {"title": "Organization usage", "url": "https://developers.openai.com/api/reference/python/resources/admin/subresources/organization/subresources/usage", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["The Admin API requires a separate organization admin key.", "No simple public prepaid cash-balance endpoint was verified."]
+    },
+    {
+      "id": "bytedance",
+      "display_name": "ByteDance / Volcengine Ark",
+      "inference": {
+        "protocols": ["openai_compatible"],
+        "sites": [{"id": "beijing", "region": "cn-beijing", "base_url": "https://ark.cn-beijing.volces.com/api/v3", "status": "documented"}],
+        "model_discovery": {"mode": "control_plane_api", "method": "POST", "endpoint": "https://open.volcengineapi.com", "operation": "ListFoundationModels", "credential_scope": "admin_finance"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/bytedance", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": "kv-infra-shared/data/llm-admin/providers/bytedance", "auth_scheme": "volcengine_hmac", "header_name": "Authorization", "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "cloud_billing_api", "plan_quota": "unknown", "usage": "admin_api", "cost": "cloud_billing_api", "rate_limits": "admin_api", "spending_limit": "unknown"},
+      "finance_endpoints": [
+        {"capabilities": ["cash_balance"], "access": "cloud_billing_api", "method": "POST", "endpoint": "https://open.volcengineapi.com", "operation": "QueryBalanceAcct", "credential_scope": "admin_finance"},
+        {"capabilities": ["usage"], "access": "admin_api", "method": "POST", "endpoint": "https://open.volcengineapi.com", "operation": "GetInferenceUsage", "credential_scope": "admin_finance"}
+      ],
+      "official_sources": [
+        {"title": "Ark OpenAI-compatible API", "url": "https://www.volcengine.com/docs/82379/1795150", "verified_on": "2026-09-05"},
+        {"title": "QueryBalanceAcct", "url": "https://www.volcengine.com/docs/6269/1223898?lang=zh", "verified_on": "2026-09-05"},
+        {"title": "Ark API reference", "url": "https://api.volcengine.com/api-docs/view?action=GetSeatUsageDetails&serviceCode=ark&version=2024-01-01", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["Management and billing require a separate signed cloud identity.", "Doubao family labels must be resolved to an exact endpoint and model version."]
+    },
+    {
+      "id": "anthropic",
+      "display_name": "Anthropic",
+      "inference": {
+        "protocols": ["anthropic_messages"],
+        "sites": [{"id": "global", "region": "global", "base_url": "https://api.anthropic.com", "status": "documented"}],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://api.anthropic.com/v1/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/anthropic", "auth_scheme": "x_api_key_and_version", "header_name": "x-api-key", "value_prefix": null},
+        "admin_finance": {"credential_ref": "kv-infra-shared/data/llm-admin/providers/anthropic", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "}
+      },
+      "financial_capabilities": {"cash_balance": "console_only", "plan_quota": "not_applicable", "usage": "admin_api", "cost": "admin_api", "rate_limits": "admin_api", "spending_limit": "console_only"},
+      "finance_endpoints": [
+        {"capabilities": ["usage"], "access": "admin_api", "method": "GET", "endpoint": "https://api.anthropic.com/v1/organizations/usage_report/messages", "operation": null, "credential_scope": "admin_finance"},
+        {"capabilities": ["cost"], "access": "admin_api", "method": "GET", "endpoint": "https://api.anthropic.com/v1/organizations/cost_report", "operation": null, "credential_scope": "admin_finance"}
+      ],
+      "official_sources": [
+        {"title": "List models", "url": "https://platform.claude.com/docs/en/api/models/list", "verified_on": "2026-09-05"},
+        {"title": "Admin cost report", "url": "https://platform.claude.com/docs/en/api/admin/cost_report/retrieve", "verified_on": "2026-09-05"},
+        {"title": "Claude Sonnet 5", "url": "https://platform.claude.com/docs/en/models/sonnet-5/whats-new-sonnet-5", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["Inference requires the anthropic-version header in addition to x-api-key.", "Administrative reports require a separate organization admin credential."]
+    },
+    {
+      "id": "nvidia",
+      "display_name": "NVIDIA API Catalog",
+      "inference": {
+        "protocols": ["openai_compatible"],
+        "sites": [{"id": "hosted-catalog", "region": "global", "base_url": "https://integrate.api.nvidia.com/v1", "status": "documented"}],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://integrate.api.nvidia.com/v1/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/nvidia", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": null, "auth_scheme": "none", "header_name": null, "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "console_only", "plan_quota": "unknown", "usage": "console_only", "cost": "console_only", "rate_limits": "console_only", "spending_limit": "unknown"},
+      "finance_endpoints": [],
+      "official_sources": [
+        {"title": "NVIDIA model settings", "url": "https://docs.nvidia.com/nemo/datadesigner/concepts/models/default-model-settings", "verified_on": "2026-09-05"},
+        {"title": "Hosted versus self-hosted models", "url": "https://docs.nvidia.com/aiq-blueprint/2.0.0/customization/swapping-models.html", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["Hosted catalogue availability and versions may change.", "No public billing or balance API was verified."]
+    },
+    {
+      "id": "aws",
+      "display_name": "Amazon Web Services Bedrock",
+      "inference": {
+        "protocols": ["bedrock_native", "openai_compatible", "anthropic_compatible"],
+        "sites": [{"id": "regional", "region": "provider-selected", "base_url": "https://bedrock-runtime.{region}.amazonaws.com/openai/v1", "status": "template"}],
+        "model_discovery": {"mode": "control_plane_api", "method": "GET", "endpoint": "https://bedrock.{region}.amazonaws.com/foundation-models", "operation": "ListFoundationModels", "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/aws", "auth_scheme": "aws_sigv4_or_bearer", "header_name": "Authorization", "value_prefix": null},
+        "admin_finance": {"credential_ref": "kv-infra-shared/data/llm-admin/providers/aws", "auth_scheme": "aws_sigv4", "header_name": "Authorization", "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "not_applicable", "plan_quota": "not_applicable", "usage": "cloud_billing_api", "cost": "cloud_billing_api", "rate_limits": "cloud_billing_api", "spending_limit": "cloud_billing_api"},
+      "finance_endpoints": [{"capabilities": ["usage", "cost"], "access": "cloud_billing_api", "method": "POST", "endpoint": "https://ce.{region}.amazonaws.com", "operation": "GetCostAndUsage", "credential_scope": "admin_finance"}],
+      "official_sources": [
+        {"title": "Bedrock endpoints", "url": "https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html", "verified_on": "2026-09-05"},
+        {"title": "ListFoundationModels", "url": "https://docs.aws.amazon.com/bedrock/latest/APIReference/API_ListFoundationModels.html", "verified_on": "2026-09-05"},
+        {"title": "Cost Explorer GetCostAndUsage", "url": "https://docs.aws.amazon.com/aws-cost-management/latest/APIReference/API_GetCostAndUsage.html", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["Model and feature availability are region-specific.", "Model invocation may require an inference profile in addition to a model ID."]
+    },
+    {
+      "id": "meta",
+      "display_name": "Meta Model API preview",
+      "inference": {
+        "protocols": ["preview_openai_compatible"],
+        "sites": [{"id": "public-preview", "region": "unspecified", "base_url": null, "status": "unverified"}],
+        "model_discovery": {"mode": "unverified", "method": null, "endpoint": null, "operation": null, "credential_scope": "none"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/meta", "auth_scheme": "unknown", "header_name": null, "value_prefix": null},
+        "admin_finance": {"credential_ref": null, "auth_scheme": "none", "header_name": null, "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "unknown", "plan_quota": "unknown", "usage": "unknown", "cost": "unknown", "rate_limits": "unknown", "spending_limit": "unknown"},
+      "finance_endpoints": [],
+      "official_sources": [
+        {"title": "Meta Llama", "url": "https://ai.meta.com/llama/", "verified_on": "2026-09-05"},
+        {"title": "Llama API preview announcement", "url": "https://ai.meta.com/blog/llamacon-llama-news/", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["Detailed developer documentation is access-gated, so no base URL or account API was verified.", "Meta as model developer must not be confused with a third-party inference host."]
+    },
+    {
+      "id": "microsoft",
+      "display_name": "Microsoft Azure Foundry",
+      "inference": {
+        "protocols": ["openai_compatible"],
+        "sites": [{"id": "azure-resource", "region": "provider-selected", "base_url": "https://{resource_name}.openai.azure.com/openai/v1", "status": "template"}],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://{resource_name}.openai.azure.com/openai/v1/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/microsoft", "auth_scheme": "azure_api_key_or_entra", "header_name": "api-key", "value_prefix": null},
+        "admin_finance": {"credential_ref": "kv-infra-shared/data/llm-admin/providers/microsoft", "auth_scheme": "azure_entra", "header_name": "Authorization", "value_prefix": "Bearer "}
+      },
+      "financial_capabilities": {"cash_balance": "not_applicable", "plan_quota": "not_applicable", "usage": "cloud_billing_api", "cost": "cloud_billing_api", "rate_limits": "cloud_billing_api", "spending_limit": "cloud_billing_api"},
+      "finance_endpoints": [{"capabilities": ["usage", "cost"], "access": "cloud_billing_api", "method": "POST", "endpoint": "https://management.azure.com/{scope}/providers/Microsoft.CostManagement/query", "operation": "CostManagementQuery", "credential_scope": "admin_finance"}],
+      "official_sources": [
+        {"title": "Foundry models API", "url": "https://learn.microsoft.com/en-us/rest/api/aifoundry/azureopenai/models", "verified_on": "2026-09-05"},
+        {"title": "Cost Management query", "url": "https://learn.microsoft.com/en-us/rest/api/cost-management/query/usage?view=rest-cost-management-2026-06-01", "verified_on": "2026-09-05"},
+        {"title": "Azure OpenAI quotas", "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/quota", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["The endpoint, deployment name, subscription, and region are all account-specific.", "Azure Cost Management requires separate Entra ID and RBAC permissions."]
+    },
+    {
+      "id": "xiaomi",
+      "display_name": "Xiaomi MiMo",
+      "inference": {
+        "protocols": ["openai_compatible", "anthropic_compatible"],
+        "sites": [
+          {"id": "paygo", "region": "global", "base_url": "https://api.xiaomimimo.com/v1", "status": "documented"},
+          {"id": "token-plan-cn", "region": "cn", "base_url": "https://token-plan-cn.xiaomimimo.com/v1", "status": "documented"}
+        ],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://api.xiaomimimo.com/v1/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/xiaomi", "auth_scheme": "api_key_or_bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": null, "auth_scheme": "none", "header_name": null, "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "console_only", "plan_quota": "console_only", "usage": "console_only", "cost": "console_only", "rate_limits": "console_only", "spending_limit": "unknown"},
+      "finance_endpoints": [],
+      "official_sources": [
+        {"title": "List models", "url": "https://mimo.mi.com/docs/en-US/api/model/list-models", "verified_on": "2026-09-05"},
+        {"title": "Rate limits", "url": "https://mimo.mi.com/docs/en-US/api/guidance/rate-limit", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["Pay-as-you-go and Token Plan use separate hosts and credentials.", "Account limits are shared across all API keys."]
+    },
+    {
+      "id": "baidu",
+      "display_name": "Baidu Qianfan",
+      "inference": {
+        "protocols": ["openai_compatible"],
+        "sites": [{"id": "china", "region": "cn", "base_url": "https://qianfan.baidubce.com/v2", "status": "documented"}],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://qianfan.baidubce.com/v2/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/baidu", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": null, "auth_scheme": "none", "header_name": null, "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "unknown", "plan_quota": "unknown", "usage": "console_only", "cost": "console_only", "rate_limits": "console_only", "spending_limit": "unknown"},
+      "finance_endpoints": [],
+      "official_sources": [
+        {"title": "Qianfan Models API", "url": "https://cloud.baidu.com/doc/qianfan-api/s/Dmba8k71y", "verified_on": "2026-09-05"},
+        {"title": "Usage statistics", "url": "https://cloud.baidu.com/doc/qianfan-docs/s/km96ryv9w", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["A direct cash-balance endpoint was not verified.", "ERNIE family names must be resolved to a concrete model or custom endpoint."]
+    },
+    {
+      "id": "baichuan",
+      "display_name": "Baichuan Intelligence",
+      "inference": {
+        "protocols": ["openai_chat_partial"],
+        "sites": [{"id": "china", "region": "cn", "base_url": "https://api.baichuan-ai.com/v1", "status": "documented"}],
+        "model_discovery": {"mode": "static_documentation", "method": null, "endpoint": null, "operation": null, "credential_scope": "none"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/baichuan", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": null, "auth_scheme": "none", "header_name": null, "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "console_only", "plan_quota": "unknown", "usage": "console_only", "cost": "console_only", "rate_limits": "console_only", "spending_limit": "unknown"},
+      "finance_endpoints": [],
+      "official_sources": [
+        {"title": "Baichuan API", "url": "https://platform.baichuan-ai.com/docs/api", "verified_on": "2026-09-05"},
+        {"title": "Error codes", "url": "https://platform.baichuan-ai.com/docs/errCode", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["No live model-list, aggregate usage, or balance endpoint was verified.", "Static documentation appears inconsistent across model generations."]
+    },
+    {
+      "id": "stepfun",
+      "display_name": "StepFun",
+      "inference": {
+        "protocols": ["openai_compatible"],
+        "sites": [
+          {"id": "global", "region": "global", "base_url": "https://api.stepfun.ai/v1", "status": "documented"},
+          {"id": "china", "region": "cn", "base_url": "https://api.stepfun.com/v1", "status": "documented"}
+        ],
+        "model_discovery": {"mode": "api", "method": "GET", "endpoint": "https://api.stepfun.ai/v1/models", "operation": null, "credential_scope": "inference"}
+      },
+      "credentials": {
+        "inference": {"credential_ref": "kv-infra-shared/data/llm/providers/stepfun", "auth_scheme": "bearer", "header_name": "Authorization", "value_prefix": "Bearer "},
+        "admin_finance": {"credential_ref": null, "auth_scheme": "none", "header_name": null, "value_prefix": null}
+      },
+      "financial_capabilities": {"cash_balance": "direct_api", "plan_quota": "unknown", "usage": "console_only", "cost": "console_only", "rate_limits": "console_only", "spending_limit": "unknown"},
+      "finance_endpoints": [{"capabilities": ["cash_balance"], "access": "direct_api", "method": "GET", "endpoint": "https://api.stepfun.com/v1/accounts", "operation": null, "credential_scope": "inference"}],
+      "official_sources": [
+        {"title": "Global model list", "url": "https://platform.stepfun.ai/docs/en/api-reference/models/list", "verified_on": "2026-09-05"},
+        {"title": "China account balance", "url": "https://platform.stepfun.com/docs/zh/api-reference/accounts/get", "verified_on": "2026-09-05"},
+        {"title": "Model Lab limits", "url": "https://platform.stepfun.com/docs/zh/guides/models/model-lab", "verified_on": "2026-09-05"}
+      ],
+      "limitations": ["The verified balance endpoint is China-only; global parity is unknown.", "Model Lab has low concurrency and no production SLA."]
+    }
+  ],
+  "deployment_mappings": [
+    {"deployment_id": "qwen-utility-api", "card_id": "qwen-3-7-flash", "developer_id": "alibaba", "inference_provider_account_id": "alibaba", "exact_model_id": "qwen3.7-flash-2026-07-15", "activation_state": "configured_not_network_verified", "source": "local_orchestrator_configuration"},
+    {"deployment_id": "alibaba-deepseek-ops-api", "card_id": "deepseek-v4-flash", "developer_id": "deepseek", "inference_provider_account_id": "alibaba", "exact_model_id": "deepseek-v4-flash", "activation_state": "configured_not_network_verified", "source": "local_orchestrator_configuration"},
+    {"deployment_id": "deepseek-ops-api", "card_id": "deepseek-v4-flash", "developer_id": "deepseek", "inference_provider_account_id": "deepseek", "exact_model_id": "deepseek-v4-flash", "activation_state": "configured_not_network_verified", "source": "local_orchestrator_configuration"},
+    {"deployment_id": "qwen-ops-api", "card_id": "qwen-3-7-plus", "developer_id": "alibaba", "inference_provider_account_id": "alibaba", "exact_model_id": "qwen3.7-plus-2026-05-26", "activation_state": "configured_not_network_verified", "source": "local_orchestrator_configuration"},
+    {"deployment_id": "deepseek-reasoning", "card_id": "deepseek-v4-pro", "developer_id": "deepseek", "inference_provider_account_id": "deepseek", "exact_model_id": "deepseek-v4-pro", "activation_state": "configured_not_network_verified", "source": "local_orchestrator_configuration"},
+    {"deployment_id": "deepseek-coder-api", "card_id": "deepseek-v4-pro", "developer_id": "deepseek", "inference_provider_account_id": "deepseek", "exact_model_id": "deepseek-v4-pro", "activation_state": "configured_not_network_verified", "source": "local_orchestrator_configuration"},
+    {"deployment_id": "qwen-reasoning-api", "card_id": "qwen-3-8-max", "developer_id": "alibaba", "inference_provider_account_id": "alibaba", "exact_model_id": "qwen3.8-max-0902", "activation_state": "configured_not_network_verified", "source": "local_orchestrator_configuration"}
+  ]
+}

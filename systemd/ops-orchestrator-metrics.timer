@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh Ops orchestrator Prometheus metrics every minute
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=60s
+AccuracySec=10s
+RandomizedDelaySec=5s
+Persistent=true
+Unit=ops-orchestrator-metrics.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,6 @@
+; Permit the stock systemd socket proxy's confined domain transition under NNP.
+; No network, file, or arbitrary-process access is added to init_t.
+(allow init_t systemd_socket_proxyd_t (process2 (nnp_transition)))
+; The proxy executable is fixed to the loopback Alertmanager endpoint.
+; Its unit additionally restricts IP traffic to localhost.
+(allow systemd_socket_proxyd_t unreserved_port_t (tcp_socket (name_connect)))

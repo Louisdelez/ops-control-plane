@@ -1,0 +1,59 @@
+[Unit]
+Description=Check Fedora system integrity with AIDE
+Documentation=man:aide(1) man:aide.conf(5)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=root
+Group=node-exporter
+ExecStart=/usr/local/libexec/ops-aide-check
+# Integrity differences and an intentionally absent baseline are probe results,
+# not scheduler failures.  Prometheus remains fail-closed through the emitted
+# status/error metrics; unexpected operational failures still fail the unit.
+SuccessExitStatus=1 2 3 4 5 6 7 24
+UMask=0077
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=idle
+CPUWeight=25
+IOWeight=25
+MemoryHigh=1G
+MemoryMax=2G
+MemorySwapMax=0
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_AUDIT_WRITE
+DevicePolicy=closed
+IPAddressDeny=any
+KeyringMode=private
+PrivateDevices=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=read-only
+ProtectHostname=yes
+ProtectKernelLogs=yes
+# AIDE must see /usr/lib/modules exactly as the host sees it.  Enabling
+# ProtectKernelModules would hide that tree in the unit mount namespace and
+# create a false mass-deletion incident on every check.
+ProtectKernelModules=no
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProtectSystem=strict
+ProcSubset=pid
+RemoveIPC=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+InaccessiblePaths=-/home/ops-user -/run/credentials -/run/secrets
+ReadOnlyPaths=-/etc/aide.conf -/etc/aide/ops-control-plane.conf -/var/lib/aide/aide.db.gz
+ReadWritePaths=-/var/log/aide /var/lib/node-exporter/textfile
+
+[Install]
+WantedBy=multi-user.target

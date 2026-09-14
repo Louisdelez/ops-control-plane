@@ -1,0 +1,2201 @@
+#!/usr/bin/python3
+"""Deterministic, fail-closed operational primitives for the Dell Ops V1.
+
+The program deliberately has no SSH, cloud-provider or secret-reading code.
+Remote observations must arrive through an explicitly authorised collector and
+all mutation primitives operate on local, allowlisted paths only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import dataclasses
+import datetime as dt
+import difflib
+import fcntl
+import fnmatch
+import hashlib
+import http.client
+import ipaddress
+import json
+import os
+import re
+import signal
+import shutil
+import socket
+import ssl
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.parse
+from collections import Counter
+from pathlib import Path, PurePosixPath
+from typing import Any, Iterator, Sequence
+
+
+SCHEMA_VERSION = 1
+MAX_JSON_BYTES = 2 * 1024 * 1024
+MAX_CONFIG_BYTES = 2 * 1024 * 1024
+MAX_HTTP_BODY = 64 * 1024
+MAX_ARCHIVE_FILES = 20_000
+IDENTIFIER = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+GIT_REVISION = re.compile(r"^[0-9a-fA-F]{7,64}$")
+SERVICE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9@_.-]{0,127}$")
+SECRET_NAME = re.compile(
+    r"(?i)(password|passwd|secret|token|private[_ -]?key|api[_ -]?key|credential|authorization)"
+)
+ALLOWED_CHECK_TYPES = {"dns", "tls", "http", "tcp", "backup", "file", "service", "journal"}
+
+
+class OpsError(RuntimeError):
+    """Expected fail-closed error exposed as a structured result."""
+
+    def __init__(self, code: str, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.details = details or {}
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"ok": False, "error": self.code, "message": self.message, "details": self.details}
+
+
+def utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def isoformat(value: dt.datetime | None = None) -> str:
+    return (value or utcnow()).astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def parse_time(value: Any, field: str) -> dt.datetime:
+    if not isinstance(value, str) or len(value) > 64:
+        raise OpsError("invalid_time", f"{field} must be an ISO-8601 string")
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise OpsError("invalid_time", f"{field} is not valid ISO-8601") from exc
+    if parsed.tzinfo is None:
+        raise OpsError("invalid_time", f"{field} must include a timezone")
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def require_mapping(value: Any, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise OpsError("invalid_schema", f"{field} must be an object")
+    return value
+
+
+def require_list(value: Any, field: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise OpsError("invalid_schema", f"{field} must be an array")
+    return value
+
+
+def require_keys(value: dict[str, Any], allowed: set[str], required: set[str], field: str) -> None:
+    missing = required - set(value)
+    unknown = set(value) - allowed
+    if missing or unknown:
+        raise OpsError(
+            "invalid_schema",
+            f"{field} keys do not match the schema",
+            details={"missing": sorted(missing), "unknown": sorted(unknown)},
+        )
+
+
+def require_identifier(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not IDENTIFIER.fullmatch(value):
+        raise OpsError("invalid_identifier", f"{field} is not a safe identifier")
+    return value
+
+
+def require_string(value: Any, field: str, *, maximum: int = 4096, nonempty: bool = True) -> str:
+    if not isinstance(value, str) or "\x00" in value or "\n" in value or "\r" in value:
+        raise OpsError("invalid_string", f"{field} must be bounded single-line text")
+    if (nonempty and not value) or len(value) > maximum:
+        raise OpsError("invalid_string", f"{field} has an invalid length")
+    return value
+
+
+def read_json(path: Path, *, max_bytes: int = MAX_JSON_BYTES) -> Any:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except FileNotFoundError as exc:
+        raise OpsError("file_missing", f"required file is missing: {path}") from exc
+    except OSError as exc:
+        raise OpsError("symlink_forbidden", f"cannot safely open file: {path}") from exc
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise OpsError("not_regular_file", f"expected a regular file: {path}")
+        if info.st_size > max_bytes:
+            raise OpsError("file_too_large", f"file exceeds {max_bytes} bytes: {path}")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = -1
+            raw = handle.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            raise OpsError("file_too_large", f"file exceeds {max_bytes} bytes: {path}")
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise OpsError("invalid_json", f"invalid JSON file: {path}") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def canonical_json(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise OpsError("unsafe_file", f"cannot safely hash file: {path}") from exc
+    with os.fdopen(descriptor, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise OpsError("not_regular_file", f"expected a regular file: {path}")
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def atomic_json(path: Path, payload: Any, *, mode: int = 0o640) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.parent.is_symlink() or path.is_symlink():
+        raise OpsError("symlink_forbidden", f"unsafe output path: {path}")
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary_path = Path(temporary)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary_path, mode)
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def atomic_text(path: Path, text: str, *, mode: int = 0o640) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.parent.is_symlink() or path.is_symlink():
+        raise OpsError("symlink_forbidden", f"unsafe output path: {path}")
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary_path = Path(temporary)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary_path, mode)
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def validate_absolute_path(value: Any, field: str) -> Path:
+    text = require_string(value, field, maximum=4096)
+    path = Path(text)
+    if not path.is_absolute() or any(part == ".." for part in path.parts):
+        raise OpsError("unsafe_path", f"{field} must be an absolute path without '..'")
+    if path in {Path("/"), Path("/home"), Path("/etc"), Path("/var"), Path("/usr")}:
+        raise OpsError("unsafe_path", f"{field} is too broad")
+    return path
+
+
+def ensure_under(root: Path, path: Path, field: str, *, require_exists: bool = False) -> Path:
+    root_resolved = root.resolve(strict=require_exists)
+    path_resolved = path.resolve(strict=require_exists)
+    if path_resolved == root_resolved or not path_resolved.is_relative_to(root_resolved):
+        raise OpsError("path_escape", f"{field} escapes its allowlisted root")
+    return path_resolved
+
+
+def validate_no_symlink_parents(path: Path, stop: Path | None = None) -> None:
+    current = path
+    while True:
+        if current.exists() and current.is_symlink():
+            raise OpsError("symlink_forbidden", f"symbolic link in managed path: {current}")
+        if current == current.parent or (stop is not None and current == stop):
+            break
+        current = current.parent
+
+
+@contextlib.contextmanager
+def resource_lock(resource_id: str, lock_root: Path, *, timeout: float = 0.0) -> Iterator[Path]:
+    require_identifier(resource_id, "resource_id")
+    lock_root.mkdir(parents=True, exist_ok=True)
+    validate_no_symlink_parents(lock_root)
+    lock_path = lock_root / f"{sha256_bytes(resource_id.encode())}.lock"
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    started = time.monotonic()
+    try:
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() - started >= timeout:
+                    raise OpsError("resource_locked", f"resource is already locked: {resource_id}") from exc
+                time.sleep(min(0.1, max(0.0, timeout - (time.monotonic() - started))))
+        os.ftruncate(descriptor, 0)
+        os.write(descriptor, canonical_json({"resource_id": resource_id, "pid": os.getpid(), "at": isoformat()}))
+        os.fsync(descriptor)
+        yield lock_path
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+@contextlib.contextmanager
+def deadline(seconds: int) -> Iterator[None]:
+    """Enforce a wall-clock deadline for blocking libc/network calls on Linux."""
+    if seconds <= 0 or not hasattr(signal, "setitimer"):
+        raise OpsError("invalid_timeout", "a positive POSIX deadline is required")
+    def timed_out(_signum: int, _frame: Any) -> None:
+        raise OpsError("timeout", f"operation exceeded its {seconds}-second deadline")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, timed_out)
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, seconds)
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        elapsed = time.monotonic() - started
+        restored_delay = max(0.001, previous_timer[0] - elapsed) if previous_timer[0] > 0 else 0.0
+        signal.setitimer(signal.ITIMER_REAL, restored_delay, previous_timer[1])
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
+def append_event(events_path: Path | None, event: dict[str, Any]) -> None:
+    if events_path is None:
+        return
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    validate_no_symlink_parents(events_path.parent)
+    if events_path.is_symlink():
+        raise OpsError("symlink_forbidden", f"event log is a symlink: {events_path}")
+    previous_hash = "0" * 64
+    if events_path.exists():
+        existing = read_events(events_path)
+        if existing:
+            previous_hash = existing[-1]["event_hash"]
+    payload = {
+        "schema_version": 1,
+        "timestamp": isoformat(),
+        "previous_hash": previous_hash,
+        **event,
+    }
+    payload["event_hash"] = sha256_bytes(canonical_json(payload))
+    descriptor = os.open(events_path, os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.close(descriptor)
+        raise
+
+
+def validate_contract_catalog(path: Path) -> dict[str, Any]:
+    catalog = require_mapping(read_json(path), "catalog")
+    require_keys(catalog, {"schema_version", "contracts"}, {"schema_version", "contracts"}, "catalog")
+    if catalog["schema_version"] != SCHEMA_VERSION:
+        raise OpsError("unsupported_version", "contract catalog version is unsupported")
+    allowed = {
+        "name", "version", "description", "project", "phase", "action_class", "risk",
+        "permissions", "parameters", "preconditions", "expected_result", "errors",
+        "timeout_seconds", "max_attempts", "idempotency", "dry_run", "rollback",
+    }
+    names: set[str] = set()
+    for index, raw in enumerate(require_list(catalog["contracts"], "contracts")):
+        contract = require_mapping(raw, f"contracts[{index}]")
+        require_keys(contract, allowed, allowed, f"contracts[{index}]")
+        name = require_identifier(contract["name"], f"contracts[{index}].name")
+        if name in names:
+            raise OpsError("duplicate_contract", f"duplicate contract: {name}")
+        names.add(name)
+        if contract["version"] != 1:
+            raise OpsError("unsupported_version", f"unsupported contract version: {name}")
+        require_string(contract["description"], f"{name}.description", maximum=500)
+        require_identifier(contract["project"], f"{name}.project")
+        if contract["phase"] not in {"observation", "analysis", "action"}:
+            raise OpsError("invalid_contract", f"invalid phase for {name}")
+        if contract["action_class"] not in {"A", "B", "C"}:
+            raise OpsError("invalid_contract", f"invalid action class for {name}")
+        if contract["phase"] == "action" and contract["action_class"] == "A":
+            raise OpsError("invalid_contract", f"an action cannot be class A: {name}")
+        if contract["risk"] not in {"low", "medium", "high", "critical"}:
+            raise OpsError("invalid_contract", f"invalid risk for {name}")
+        permissions = require_list(contract["permissions"], f"{name}.permissions")
+        if not permissions or any(not isinstance(item, str) or len(item) > 128 for item in permissions):
+            raise OpsError("invalid_contract", f"invalid permissions for {name}")
+        require_mapping(contract["parameters"], f"{name}.parameters")
+        for field in ("preconditions", "expected_result", "errors"):
+            items = require_list(contract[field], f"{name}.{field}")
+            if not items or any(not isinstance(item, str) or not item or len(item) > 500 for item in items):
+                raise OpsError("invalid_contract", f"invalid {field} for {name}")
+        if not isinstance(contract["timeout_seconds"], int) or not 1 <= contract["timeout_seconds"] <= 3600:
+            raise OpsError("invalid_contract", f"invalid timeout for {name}")
+        if not isinstance(contract["max_attempts"], int) or not 1 <= contract["max_attempts"] <= 3:
+            raise OpsError("invalid_contract", f"invalid max attempts for {name}")
+        for field in ("idempotency", "dry_run", "rollback"):
+            require_string(contract[field], f"{name}.{field}", maximum=1000)
+    return {"ok": True, "contracts": len(names), "names": sorted(names)}
+
+
+def _validate_check(check: dict[str, Any], field: str) -> None:
+    common = {"id", "type", "enabled", "project", "resource_id", "timeout_seconds"}
+    by_type = {
+        "dns": {"hostname", "expected_addresses"},
+        "tls": {"hostname", "port", "minimum_days"},
+        "http": {"url", "expected_status", "allow_plain_http"},
+        "tcp": {"hostname", "port"},
+        "backup": {"evidence_path", "maximum_age_seconds", "require_integrity", "expected_target_id"},
+        "file": {"path", "sha256", "maximum_age_seconds"},
+        "service": {"unit"},
+        "journal": {"unit", "since_seconds", "forbidden_patterns", "maximum_lines"},
+    }
+    kind = check.get("type")
+    if kind not in ALLOWED_CHECK_TYPES:
+        raise OpsError("invalid_check", f"{field}.type is unsupported")
+    required_by_type = {
+        "dns": {"hostname"},
+        "tls": {"hostname", "port", "minimum_days"},
+        "http": {"url", "expected_status"},
+        "tcp": {"hostname", "port"},
+        "backup": {"evidence_path", "maximum_age_seconds", "require_integrity"},
+        "file": {"path"},
+        "service": {"unit"},
+        "journal": {"unit", "since_seconds", "forbidden_patterns", "maximum_lines"},
+    }
+    require_keys(check, common | by_type[kind], common | required_by_type[kind], field)
+    require_identifier(check["id"], f"{field}.id")
+    require_identifier(check["project"], f"{field}.project")
+    require_identifier(check["resource_id"], f"{field}.resource_id")
+    if not isinstance(check["enabled"], bool):
+        raise OpsError("invalid_check", f"{field}.enabled must be boolean")
+    timeout = check["timeout_seconds"]
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 30:
+        raise OpsError("invalid_check", f"{field}.timeout_seconds must be between 1 and 30")
+    if kind in {"dns", "tls", "tcp"}:
+        host = require_string(check["hostname"], f"{field}.hostname", maximum=253)
+        if any(character.isspace() for character in host) or "/" in host or "@" in host:
+            raise OpsError("invalid_check", f"{field}.hostname is unsafe")
+    if kind in {"tls", "tcp"}:
+        port = check["port"]
+        if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+            raise OpsError("invalid_check", f"{field}.port is invalid")
+    if kind == "dns":
+        expected = check.get("expected_addresses", [])
+        if not isinstance(expected, list) or any(not isinstance(item, str) for item in expected):
+            raise OpsError("invalid_check", f"{field}.expected_addresses is invalid")
+        for address in expected:
+            try:
+                ipaddress.ip_address(address)
+            except ValueError as exc:
+                raise OpsError("invalid_check", f"{field} contains an invalid expected IP") from exc
+    elif kind == "tls":
+        if not isinstance(check["minimum_days"], int) or not 0 <= check["minimum_days"] <= 3650:
+            raise OpsError("invalid_check", f"{field}.minimum_days is invalid")
+    elif kind == "http":
+        parsed = urllib.parse.urlsplit(require_string(check["url"], f"{field}.url", maximum=2048))
+        if parsed.username or parsed.password or parsed.fragment:
+            raise OpsError("invalid_check", f"{field}.url must not contain credentials or a fragment")
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise OpsError("invalid_check", f"{field}.url is invalid")
+        allow_http = check.get("allow_plain_http", False)
+        if not isinstance(allow_http, bool) or (parsed.scheme == "http" and not allow_http):
+            raise OpsError("invalid_check", f"{field}.url requires HTTPS")
+        status_code = check["expected_status"]
+        if not isinstance(status_code, int) or not 100 <= status_code <= 599:
+            raise OpsError("invalid_check", f"{field}.expected_status is invalid")
+    elif kind in {"backup", "file"}:
+        validate_absolute_path(check["evidence_path"] if kind == "backup" else check["path"], field)
+        maximum_age = check.get("maximum_age_seconds")
+        if maximum_age is not None and (
+            not isinstance(maximum_age, int) or isinstance(maximum_age, bool) or not 1 <= maximum_age <= 31_536_000
+        ):
+            raise OpsError("invalid_check", f"{field}.maximum_age_seconds is invalid")
+        digest = check.get("sha256")
+        if digest is not None and (not isinstance(digest, str) or not SHA256.fullmatch(digest)):
+            raise OpsError("invalid_check", f"{field}.sha256 is invalid")
+        if kind == "backup" and not isinstance(check["require_integrity"], bool):
+            raise OpsError("invalid_check", f"{field}.require_integrity must be boolean")
+        if kind == "backup" and "expected_target_id" in check:
+            require_identifier(check["expected_target_id"], f"{field}.expected_target_id")
+    elif kind == "service":
+        if not isinstance(check["unit"], str) or not SERVICE.fullmatch(check["unit"]):
+            raise OpsError("invalid_check", f"{field}.unit is invalid")
+    elif kind == "journal":
+        if not isinstance(check["unit"], str) or not SERVICE.fullmatch(check["unit"]):
+            raise OpsError("invalid_check", f"{field}.unit is invalid")
+        if not isinstance(check["since_seconds"], int) or not 1 <= check["since_seconds"] <= 604800:
+            raise OpsError("invalid_check", f"{field}.since_seconds is invalid")
+        if not isinstance(check["maximum_lines"], int) or not 1 <= check["maximum_lines"] <= 5000:
+            raise OpsError("invalid_check", f"{field}.maximum_lines is invalid")
+        patterns = check["forbidden_patterns"]
+        if not isinstance(patterns, list) or any(not isinstance(item, str) or not item or len(item) > 200 for item in patterns):
+            raise OpsError("invalid_check", f"{field}.forbidden_patterns is invalid")
+
+
+def validate_inventory(path: Path) -> dict[str, Any]:
+    inventory = require_mapping(read_json(path), "inventory")
+    require_keys(
+        inventory,
+        {"schema_version", "generated_from", "resources", "checks"},
+        {"schema_version", "generated_from", "resources", "checks"},
+        "inventory",
+    )
+    if inventory["schema_version"] != SCHEMA_VERSION:
+        raise OpsError("unsupported_version", "inventory version is unsupported")
+    sources = require_list(inventory["generated_from"], "generated_from")
+    if any(not isinstance(item, str) or not item or len(item) > 500 for item in sources):
+        raise OpsError("invalid_inventory", "generated_from is invalid")
+    resource_fields = {
+        "id", "kind", "provider", "os_family", "project", "environment", "criticality",
+        "connection_alias", "management_enabled", "discovery_enabled", "expected_services", "shared_by",
+    }
+    ids: set[str] = set()
+    resources = require_list(inventory["resources"], "resources")
+    for index, raw in enumerate(resources):
+        resource = require_mapping(raw, f"resources[{index}]")
+        require_keys(resource, resource_fields, resource_fields, f"resources[{index}]")
+        resource_id = require_identifier(resource["id"], f"resources[{index}].id")
+        if resource_id in ids:
+            raise OpsError("duplicate_resource", f"duplicate resource: {resource_id}")
+        ids.add(resource_id)
+        for key in ("kind", "provider", "os_family", "project", "environment", "connection_alias"):
+            require_identifier(resource[key], f"resources[{index}].{key}")
+        if resource["criticality"] not in {"low", "medium", "high", "critical"}:
+            raise OpsError("invalid_inventory", f"resources[{index}].criticality is invalid")
+        if not isinstance(resource["management_enabled"], bool) or not isinstance(resource["discovery_enabled"], bool):
+            raise OpsError("invalid_inventory", f"resources[{index}] enable flags must be boolean")
+        for key in ("expected_services", "shared_by"):
+            values = require_list(resource[key], f"resources[{index}].{key}")
+            pattern = SERVICE if key == "expected_services" else IDENTIFIER
+            if len(values) != len(set(values)) or any(not isinstance(item, str) or not pattern.fullmatch(item) for item in values):
+                raise OpsError("invalid_inventory", f"resources[{index}].{key} is invalid")
+    checks = require_list(inventory["checks"], "checks")
+    check_ids: set[str] = set()
+    for index, raw in enumerate(checks):
+        check = require_mapping(raw, f"checks[{index}]")
+        _validate_check(check, f"checks[{index}]")
+        if check["id"] in check_ids:
+            raise OpsError("duplicate_check", f"duplicate check: {check['id']}")
+        if check["resource_id"] not in ids:
+            raise OpsError("unknown_resource", f"check references unknown resource: {check['resource_id']}")
+        check_ids.add(check["id"])
+    inventory["_resource_ids"] = sorted(ids)
+    return inventory
+
+
+class _NoRedirect(http.client.HTTPConnection):
+    pass
+
+
+def _probe_dns(check: dict[str, Any]) -> dict[str, Any]:
+    started = time.monotonic()
+    try:
+        results = socket.getaddrinfo(check["hostname"], None, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise OpsError("unavailable", f"DNS resolution failed: {exc}") from exc
+    addresses = sorted({item[4][0] for item in results})
+    expected = sorted(check.get("expected_addresses", []))
+    ok = not expected or all(address in addresses for address in expected)
+    return {"ok": ok, "addresses": addresses, "expected": expected, "latency_ms": round((time.monotonic() - started) * 1000, 2)}
+
+
+def _probe_tcp(check: dict[str, Any]) -> dict[str, Any]:
+    started = time.monotonic()
+    try:
+        with socket.create_connection((check["hostname"], check["port"]), timeout=check["timeout_seconds"]):
+            pass
+    except OSError as exc:
+        raise OpsError("unavailable", f"TCP connection failed: {exc.__class__.__name__}") from exc
+    return {"ok": True, "latency_ms": round((time.monotonic() - started) * 1000, 2)}
+
+
+def _probe_tls(check: dict[str, Any]) -> dict[str, Any]:
+    started = time.monotonic()
+    context = ssl.create_default_context()
+    try:
+        with socket.create_connection((check["hostname"], check["port"]), timeout=check["timeout_seconds"]) as raw:
+            with context.wrap_socket(raw, server_hostname=check["hostname"]) as wrapped:
+                certificate = wrapped.getpeercert()
+                protocol = wrapped.version()
+    except (OSError, ssl.SSLError) as exc:
+        raise OpsError("unavailable", f"TLS check failed: {exc.__class__.__name__}") from exc
+    not_after = certificate.get("notAfter")
+    if not isinstance(not_after, str):
+        raise OpsError("invalid_certificate", "certificate expiry is missing")
+    expiry = dt.datetime.fromtimestamp(ssl.cert_time_to_seconds(not_after), tz=dt.timezone.utc)
+    days = (expiry - utcnow()).total_seconds() / 86400
+    return {
+        "ok": days >= check["minimum_days"],
+        "expires_at": isoformat(expiry),
+        "days_remaining": round(days, 2),
+        "protocol": protocol,
+        "latency_ms": round((time.monotonic() - started) * 1000, 2),
+    }
+
+
+def _probe_http(check: dict[str, Any]) -> dict[str, Any]:
+    parsed = urllib.parse.urlsplit(check["url"])
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    connection_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+    started = time.monotonic()
+    connection = connection_cls(parsed.hostname, port, timeout=check["timeout_seconds"])
+    try:
+        target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+        connection.request("GET", target, headers={"User-Agent": "Dell-Ops-V1/1", "Accept": "*/*"})
+        response = connection.getresponse()
+        body = response.read(MAX_HTTP_BODY + 1)
+    except (OSError, http.client.HTTPException, ssl.SSLError) as exc:
+        raise OpsError("unavailable", f"HTTP check failed: {exc.__class__.__name__}") from exc
+    finally:
+        connection.close()
+    if len(body) > MAX_HTTP_BODY:
+        raise OpsError("response_too_large", "HTTP response exceeded the bounded read limit")
+    return {
+        "ok": response.status == check["expected_status"],
+        "status": response.status,
+        "expected_status": check["expected_status"],
+        "body_bytes": len(body),
+        "latency_ms": round((time.monotonic() - started) * 1000, 2),
+    }
+
+
+def _probe_backup(check: dict[str, Any]) -> dict[str, Any]:
+    path = Path(check["evidence_path"])
+    evidence = require_mapping(read_json(path, max_bytes=128 * 1024), "backup evidence")
+    allowed = {"schema_version", "resource_id", "target_id", "completed_at", "status", "integrity_verified", "snapshot_id"}
+    require_keys(evidence, allowed, allowed, "backup evidence")
+    if evidence["schema_version"] != 1 or evidence["status"] != "success":
+        raise OpsError("backup_failed", "backup evidence does not report success")
+    require_identifier(evidence["resource_id"], "backup evidence.resource_id")
+    require_identifier(evidence["target_id"], "backup evidence.target_id")
+    if evidence["resource_id"] != check["resource_id"]:
+        raise OpsError("resource_mismatch", "backup evidence is for another resource")
+    if "expected_target_id" in check and evidence["target_id"] != check["expected_target_id"]:
+        raise OpsError("resource_mismatch", "backup evidence is for another target")
+    if not isinstance(evidence["integrity_verified"], bool):
+        raise OpsError("invalid_evidence", "backup integrity flag must be boolean")
+    if check["require_integrity"] and evidence["integrity_verified"] is not True:
+        raise OpsError("integrity_unverified", "backup integrity was not verified")
+    completed = parse_time(evidence["completed_at"], "completed_at")
+    if completed > utcnow() + dt.timedelta(minutes=5):
+        raise OpsError("invalid_evidence", "backup completion time is in the future")
+    age = max(0.0, (utcnow() - completed).total_seconds())
+    if age > check["maximum_age_seconds"]:
+        raise OpsError("evidence_stale", "backup evidence is too old", details={"age_seconds": round(age)})
+    return {"ok": True, "snapshot_id": require_identifier(evidence["snapshot_id"], "snapshot_id"), "age_seconds": round(age)}
+
+
+def _probe_file(check: dict[str, Any]) -> dict[str, Any]:
+    path = Path(check["path"])
+    if path.is_symlink() or not path.is_file():
+        raise OpsError("file_missing", "expected regular file is missing")
+    info = path.stat()
+    result: dict[str, Any] = {"ok": True, "size_bytes": info.st_size}
+    if "maximum_age_seconds" in check:
+        age = max(0.0, time.time() - info.st_mtime)
+        result["age_seconds"] = round(age)
+        result["ok"] = result["ok"] and age <= check["maximum_age_seconds"]
+    if "sha256" in check:
+        actual = sha256_file(path)
+        result.update({"sha256": actual, "expected_sha256": check["sha256"]})
+        result["ok"] = result["ok"] and actual == check["sha256"]
+    return result
+
+
+def _run_bounded(argv: Sequence[str], timeout: int, *, maximum_bytes: int = 64 * 1024) -> subprocess.CompletedProcess[str]:
+    try:
+        result = subprocess.run(
+            list(argv), check=False, capture_output=True, text=True, timeout=timeout,
+            stdin=subprocess.DEVNULL, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise OpsError("timeout", f"bounded command timed out: {argv[0]}") from exc
+    if len(result.stdout.encode()) + len(result.stderr.encode()) > maximum_bytes:
+        raise OpsError("output_too_large", f"bounded command output exceeded {maximum_bytes} bytes")
+    return result
+
+
+def _probe_service(check: dict[str, Any]) -> dict[str, Any]:
+    result = _run_bounded(["/usr/bin/systemctl", "is-active", "--quiet", check["unit"]], check["timeout_seconds"])
+    return {"ok": result.returncode == 0, "state": "active" if result.returncode == 0 else "inactive"}
+
+
+def _probe_journal(check: dict[str, Any]) -> dict[str, Any]:
+    result = _run_bounded(
+        [
+            "/usr/bin/journalctl", "--unit", check["unit"], "--since", f"-{check['since_seconds']} seconds",
+            "--lines", str(check["maximum_lines"]), "--no-pager", "--output", "cat",
+        ],
+        check["timeout_seconds"],
+        maximum_bytes=256 * 1024,
+    )
+    if result.returncode != 0:
+        raise OpsError("unavailable", "journal query failed")
+    matches = sorted({pattern for pattern in check["forbidden_patterns"] if re.search(pattern, result.stdout, re.IGNORECASE)})
+    return {"ok": not matches, "forbidden_patterns_matched": matches, "lines_read": len(result.stdout.splitlines())}
+
+
+PROBES = {
+    "dns": _probe_dns,
+    "tls": _probe_tls,
+    "http": _probe_http,
+    "tcp": _probe_tcp,
+    "backup": _probe_backup,
+    "file": _probe_file,
+    "service": _probe_service,
+    "journal": _probe_journal,
+}
+
+
+def execute_checks(inventory_path: Path, *, check_ids: set[str] | None = None, probe: bool = False) -> dict[str, Any]:
+    inventory = validate_inventory(inventory_path)
+    known = {check["id"] for check in inventory["checks"]}
+    if check_ids and not check_ids <= known:
+        raise OpsError("unknown_check", "one or more requested checks are unknown", details={"unknown": sorted(check_ids - known)})
+    results: list[dict[str, Any]] = []
+    for check in inventory["checks"]:
+        if check_ids and check["id"] not in check_ids:
+            continue
+        base = {
+            "id": check["id"], "type": check["type"], "project": check["project"],
+            "resource_id": check["resource_id"], "observed_at": isoformat(),
+        }
+        if not check["enabled"]:
+            results.append({**base, "status": "skipped", "reason": "disabled"})
+            continue
+        if not probe:
+            results.append({**base, "status": "skipped", "reason": "probe_not_requested"})
+            continue
+        try:
+            with deadline(check["timeout_seconds"]):
+                outcome = PROBES[check["type"]](check)
+            results.append({**base, "status": "ok" if outcome.pop("ok") else "failed", "evidence": outcome})
+        except OpsError as exc:
+            results.append({**base, "status": "error", "error": exc.code, "message": exc.message})
+    counts = Counter(result["status"] for result in results)
+    return {
+        "schema_version": 1,
+        "phase": "observation",
+        "generated_at": isoformat(),
+        "enabled_count": sum(1 for check in inventory["checks"] if check["enabled"] and (not check_ids or check["id"] in check_ids)),
+        "summary": dict(sorted(counts.items())),
+        "results": results,
+    }
+
+
+def compare_discovery(inventory_path: Path, observation_path: Path, *, maximum_age_seconds: int = 3600) -> dict[str, Any]:
+    inventory = validate_inventory(inventory_path)
+    observed = require_mapping(read_json(observation_path), "observation")
+    require_keys(
+        observed,
+        {"schema_version", "generated_at", "collector", "inventory_sha256", "resources"},
+        {"schema_version", "generated_at", "collector", "inventory_sha256", "resources"},
+        "observation",
+    )
+    if observed["schema_version"] != 1:
+        raise OpsError("unsupported_version", "observation version is unsupported")
+    generated = parse_time(observed["generated_at"], "generated_at")
+    age = max(0.0, (utcnow() - generated).total_seconds())
+    if age > maximum_age_seconds:
+        raise OpsError("observation_stale", "observation is older than allowed", details={"age_seconds": round(age)})
+    require_identifier(observed["collector"], "collector")
+    inventory_digest = observed["inventory_sha256"]
+    if not isinstance(inventory_digest, str) or not SHA256.fullmatch(inventory_digest):
+        raise OpsError("invalid_observation", "observation inventory_sha256 is invalid")
+    if inventory_digest != sha256_file(inventory_path):
+        raise OpsError("inventory_mismatch", "observation was collected for another inventory revision")
+    observed_by_id: dict[str, dict[str, Any]] = {}
+    for index, raw in enumerate(require_list(observed["resources"], "observation.resources")):
+        item = require_mapping(raw, f"observation.resources[{index}]")
+        require_keys(item, {"id", "reachable", "services"}, {"id", "reachable", "services"}, f"observation.resources[{index}]")
+        resource_id = require_identifier(item["id"], f"observation.resources[{index}].id")
+        if resource_id in observed_by_id:
+            raise OpsError("duplicate_resource", f"observation duplicates resource: {resource_id}")
+        if not isinstance(item["reachable"], bool):
+            raise OpsError("invalid_observation", f"reachable must be boolean for {resource_id}")
+        services: dict[str, str] = {}
+        for service_index, service_raw in enumerate(require_list(item["services"], f"{resource_id}.services")):
+            service = require_mapping(service_raw, f"{resource_id}.services[{service_index}]")
+            require_keys(service, {"id", "state"}, {"id", "state"}, f"{resource_id}.services[{service_index}]")
+            service_id = service.get("id")
+            if not isinstance(service_id, str) or not SERVICE.fullmatch(service_id) or service_id in services:
+                raise OpsError("invalid_observation", f"invalid or duplicate service for {resource_id}")
+            if service["state"] not in {"active", "inactive", "failed", "unknown"}:
+                raise OpsError("invalid_observation", f"invalid service state for {resource_id}/{service_id}")
+            services[service_id] = service["state"]
+        observed_by_id[resource_id] = {"reachable": item["reachable"], "services": services}
+
+    anomalies: list[dict[str, Any]] = []
+    expected_enabled = {resource["id"]: resource for resource in inventory["resources"] if resource["discovery_enabled"]}
+    for resource_id, resource in expected_enabled.items():
+        actual = observed_by_id.get(resource_id)
+        if actual is None:
+            anomalies.append({"kind": "missing_resource", "resource_id": resource_id, "severity": resource["criticality"]})
+            continue
+        if not actual["reachable"]:
+            anomalies.append({"kind": "unreachable", "resource_id": resource_id, "severity": resource["criticality"]})
+        for service in resource["expected_services"]:
+            state = actual["services"].get(service)
+            if state is None:
+                anomalies.append({"kind": "missing_service", "resource_id": resource_id, "service": service, "severity": "warning"})
+            elif state != "active":
+                anomalies.append({"kind": "service_state", "resource_id": resource_id, "service": service, "state": state, "severity": "critical" if resource["criticality"] == "critical" else "warning"})
+        for service in sorted(set(actual["services"]) - set(resource["expected_services"])):
+            anomalies.append({"kind": "unexpected_service", "resource_id": resource_id, "service": service, "severity": "info"})
+    for resource_id in sorted(set(observed_by_id) - set(expected_enabled)):
+        anomalies.append({"kind": "unmanaged_observation", "resource_id": resource_id, "severity": "info"})
+    return {
+        "schema_version": 1,
+        "phase": "analysis",
+        "generated_at": isoformat(),
+        "source_observed_at": observed["generated_at"],
+        "collector": observed["collector"],
+        "inventory_changed": False,
+        "anomaly_count": len(anomalies),
+        "anomalies": anomalies,
+    }
+
+
+def order_mission_queue(policy_path: Path, queue_path: Path) -> dict[str, Any]:
+    policy = require_mapping(read_json(policy_path), "priority policy")
+    policy_fields = {"schema_version", "max_concurrent_actions", "priorities", "classification"}
+    require_keys(policy, policy_fields, policy_fields, "priority policy")
+    if policy["schema_version"] != 1 or policy["max_concurrent_actions"] != 1:
+        raise OpsError("invalid_policy", "V1 priority policy requires max_concurrent_actions=1")
+    priorities = require_list(policy["priorities"], "priorities")
+    if priorities != ["critical", "high", "normal", "low"]:
+        raise OpsError("invalid_policy", "priority order must be critical, high, normal, low")
+    classification = require_mapping(policy["classification"], "classification")
+    require_keys(classification, set(priorities), set(priorities), "classification")
+    seen_kinds: set[str] = set()
+    for priority in priorities:
+        kinds = require_list(classification[priority], f"classification.{priority}")
+        for kind in kinds:
+            value = require_identifier(kind, f"classification.{priority}")
+            if value in seen_kinds:
+                raise OpsError("invalid_policy", f"mission kind is classified twice: {value}")
+            seen_kinds.add(value)
+    queue = require_mapping(read_json(queue_path), "mission queue snapshot")
+    require_keys(queue, {"schema_version", "missions"}, {"schema_version", "missions"}, "mission queue snapshot")
+    if queue["schema_version"] != 1:
+        raise OpsError("unsupported_version", "mission queue snapshot version is unsupported")
+    rank = {priority: index for index, priority in enumerate(priorities)}
+    ordered: list[dict[str, Any]] = []
+    ids: set[str] = set()
+    fields = {"id", "kind", "priority", "created_at", "status", "resource_ids"}
+    for index, raw in enumerate(require_list(queue["missions"], "missions")):
+        mission = require_mapping(raw, f"missions[{index}]")
+        require_keys(mission, fields, fields, f"missions[{index}]")
+        mission_id = require_identifier(mission["id"], f"missions[{index}].id")
+        if mission_id in ids:
+            raise OpsError("duplicate_mission", f"mission is duplicated: {mission_id}")
+        ids.add(mission_id)
+        kind = require_identifier(mission["kind"], f"missions[{index}].kind")
+        if kind not in seen_kinds:
+            raise OpsError("unclassified_mission", f"mission kind is not classified: {kind}")
+        priority = mission["priority"]
+        if priority not in priorities or kind not in classification[priority]:
+            raise OpsError("priority_mismatch", f"mission priority does not match deterministic classification: {mission_id}")
+        if mission["status"] not in {"queued", "blocked"}:
+            raise OpsError("invalid_queue", f"only queued/blocked missions belong in the queue: {mission_id}")
+        created = parse_time(mission["created_at"], f"missions[{index}].created_at")
+        resources = require_list(mission["resource_ids"], f"missions[{index}].resource_ids")
+        if len(resources) != len(set(resources)) or any(not isinstance(item, str) or not IDENTIFIER.fullmatch(item) for item in resources):
+            raise OpsError("invalid_queue", f"resource_ids is invalid: {mission_id}")
+        ordered.append({**mission, "_created": created.timestamp(), "_rank": rank[priority]})
+    ordered.sort(key=lambda item: (item["status"] != "queued", item["_rank"], item["_created"], item["id"]))
+    clean = [{key: value for key, value in item.items() if not key.startswith("_")} for item in ordered]
+    return {
+        "schema_version": 1,
+        "phase": "analysis",
+        "max_concurrent_actions": 1,
+        "ordered_missions": clean,
+        "next_mission_id": next((item["id"] for item in clean if item["status"] == "queued"), None),
+        "executed": False,
+    }
+
+
+@dataclasses.dataclass(frozen=True)
+class ReleaseTarget:
+    id: str
+    enabled: bool
+    project: str
+    resource_id: str
+    environment: str
+    incoming_root: Path
+    releases_root: Path
+    persistent_root: Path
+    current_link: Path
+    persistent_paths: tuple[str, ...]
+    service_units: tuple[str, ...]
+    health_checks: tuple[dict[str, Any], ...]
+    min_free_bytes: int
+    max_unpacked_bytes: int
+    backup: dict[str, Any]
+    rollback_automatic: bool
+    approvers: tuple[str, ...]
+    audit_events_path: Path
+    lock_root: Path
+
+
+def _safe_relative(value: Any, field: str) -> str:
+    text = require_string(value, field, maximum=512)
+    path = PurePosixPath(text)
+    if path.is_absolute() or text in {".", ".."} or any(part in {"", ".", ".."} for part in path.parts):
+        raise OpsError("unsafe_path", f"{field} is not a safe relative path")
+    return str(path)
+
+
+def load_release_targets(path: Path) -> dict[str, ReleaseTarget]:
+    root = require_mapping(read_json(path), "release target registry")
+    require_keys(root, {"schema_version", "targets"}, {"schema_version", "targets"}, "release target registry")
+    if root["schema_version"] != 1:
+        raise OpsError("unsupported_version", "release target registry version is unsupported")
+    fields = {
+        "id", "enabled", "project", "resource_id", "environment", "incoming_root", "releases_root",
+        "persistent_root", "current_link", "persistent_paths", "service_units", "health_checks",
+        "min_free_bytes", "max_unpacked_bytes", "backup", "rollback_automatic", "approvers",
+        "audit_events_path", "lock_root",
+    }
+    targets: dict[str, ReleaseTarget] = {}
+    for index, raw in enumerate(require_list(root["targets"], "targets")):
+        item = require_mapping(raw, f"targets[{index}]")
+        require_keys(item, fields, fields, f"targets[{index}]")
+        target_id = require_identifier(item["id"], f"targets[{index}].id")
+        if target_id in targets:
+            raise OpsError("duplicate_target", f"duplicate release target: {target_id}")
+        for key in ("project", "resource_id", "environment"):
+            require_identifier(item[key], f"targets[{index}].{key}")
+        if not isinstance(item["enabled"], bool) or not isinstance(item["rollback_automatic"], bool):
+            raise OpsError("invalid_target", f"targets[{index}] boolean flags are invalid")
+        paths = {
+            key: validate_absolute_path(item[key], f"targets[{index}].{key}")
+            for key in ("incoming_root", "releases_root", "persistent_root", "current_link", "audit_events_path", "lock_root")
+        }
+        if len({str(value) for value in paths.values()}) != len(paths):
+            raise OpsError("invalid_target", f"targets[{index}] paths must be distinct")
+        isolation_roots = [paths["incoming_root"], paths["releases_root"], paths["persistent_root"]]
+        for left in isolation_roots:
+            for right in isolation_roots:
+                if left != right and (left.is_relative_to(right) or right.is_relative_to(left)):
+                    raise OpsError("invalid_target", f"targets[{index}] incoming/releases/persistent roots must not overlap")
+        for managed_file in (paths["current_link"], paths["audit_events_path"], paths["lock_root"]):
+            if any(managed_file.is_relative_to(root_path) for root_path in isolation_roots):
+                raise OpsError("invalid_target", f"targets[{index}] control paths may not live inside data roots")
+        persistent = tuple(_safe_relative(value, f"targets[{index}].persistent_paths") for value in require_list(item["persistent_paths"], "persistent_paths"))
+        if len(persistent) != len(set(persistent)):
+            raise OpsError("invalid_target", f"targets[{index}].persistent_paths has duplicates")
+        for left in persistent:
+            for right in persistent:
+                if left != right and PurePosixPath(left).is_relative_to(PurePosixPath(right)):
+                    raise OpsError("invalid_target", f"nested persistent paths are forbidden: {left}, {right}")
+        services = require_list(item["service_units"], "service_units")
+        if len(services) != len(set(services)) or any(not isinstance(unit, str) or not SERVICE.fullmatch(unit) for unit in services):
+            raise OpsError("invalid_target", f"targets[{index}].service_units is invalid")
+        health: list[dict[str, Any]] = []
+        for check_index, raw_check in enumerate(require_list(item["health_checks"], "health_checks")):
+            check = require_mapping(raw_check, f"targets[{index}].health_checks[{check_index}]")
+            _validate_check(check, f"targets[{index}].health_checks[{check_index}]")
+            if not check["enabled"] or check["project"] != item["project"] or check["resource_id"] != item["resource_id"]:
+                raise OpsError("invalid_target", "release health checks must be enabled and scoped to the target")
+            health.append(check)
+        if item["enabled"] and not health:
+            raise OpsError("invalid_target", f"enabled release target has no health checks: {target_id}")
+        for key, minimum, maximum in (("min_free_bytes", 0, 10**15), ("max_unpacked_bytes", 1, 10**12)):
+            value = item[key]
+            if not isinstance(value, int) or isinstance(value, bool) or not minimum <= value <= maximum:
+                raise OpsError("invalid_target", f"targets[{index}].{key} is invalid")
+        backup = require_mapping(item["backup"], f"targets[{index}].backup")
+        require_keys(
+            backup,
+            {"required", "evidence_path", "maximum_age_seconds", "require_integrity"},
+            {"required", "evidence_path", "maximum_age_seconds", "require_integrity"},
+            f"targets[{index}].backup",
+        )
+        if not isinstance(backup["required"], bool) or not isinstance(backup["require_integrity"], bool):
+            raise OpsError("invalid_target", f"targets[{index}].backup flags are invalid")
+        evidence_path = validate_absolute_path(backup["evidence_path"], f"targets[{index}].backup.evidence_path")
+        maximum_age = backup["maximum_age_seconds"]
+        if not isinstance(maximum_age, int) or isinstance(maximum_age, bool) or not 1 <= maximum_age <= 2_592_000:
+            raise OpsError("invalid_target", f"targets[{index}].backup.maximum_age_seconds is invalid")
+        backup = {**backup, "evidence_path": str(evidence_path)}
+        if persistent and item["enabled"] and not backup["required"]:
+            raise OpsError("invalid_target", f"stateful target requires backup evidence: {target_id}")
+        approvers = require_list(item["approvers"], "approvers")
+        if any(not isinstance(value, str) or not IDENTIFIER.fullmatch(value) for value in approvers):
+            raise OpsError("invalid_target", f"targets[{index}].approvers is invalid")
+        if item["enabled"] and not approvers:
+            raise OpsError("invalid_target", f"enabled target has no approver: {target_id}")
+        targets[target_id] = ReleaseTarget(
+            id=target_id,
+            enabled=item["enabled"],
+            project=item["project"],
+            resource_id=item["resource_id"],
+            environment=item["environment"],
+            incoming_root=paths["incoming_root"],
+            releases_root=paths["releases_root"],
+            persistent_root=paths["persistent_root"],
+            current_link=paths["current_link"],
+            persistent_paths=persistent,
+            service_units=tuple(services),
+            health_checks=tuple(health),
+            min_free_bytes=item["min_free_bytes"],
+            max_unpacked_bytes=item["max_unpacked_bytes"],
+            backup=backup,
+            rollback_automatic=item["rollback_automatic"],
+            approvers=tuple(approvers),
+            audit_events_path=paths["audit_events_path"],
+            lock_root=paths["lock_root"],
+        )
+    return targets
+
+
+def load_release_manifest(path: Path) -> dict[str, Any]:
+    manifest = require_mapping(read_json(path, max_bytes=256 * 1024), "release manifest")
+    fields = {
+        "schema_version", "release_id", "target_id", "project", "version", "commit", "build",
+        "change_ticket", "artifact", "migration", "persistent_paths",
+    }
+    require_keys(manifest, fields, fields, "release manifest")
+    if manifest["schema_version"] != 1:
+        raise OpsError("unsupported_version", "release manifest version is unsupported")
+    for key in ("release_id", "target_id", "project", "build", "change_ticket"):
+        require_identifier(manifest[key], key)
+    require_string(manifest["version"], "version", maximum=128)
+    if not GIT_REVISION.fullmatch(require_string(manifest["commit"], "commit", maximum=64)):
+        raise OpsError("invalid_manifest", "commit must be a 7-64 character hexadecimal revision")
+    if manifest["migration"] != "none":
+        raise OpsError("migration_forbidden", "generic release pipeline only accepts migration=none")
+    persistent = [_safe_relative(value, "persistent_paths") for value in require_list(manifest["persistent_paths"], "persistent_paths")]
+    if len(persistent) != len(set(persistent)):
+        raise OpsError("invalid_manifest", "persistent_paths contains duplicates")
+    artifact = require_mapping(manifest["artifact"], "artifact")
+    require_keys(artifact, {"path", "format", "sha256"}, {"path", "format", "sha256"}, "artifact")
+    validate_absolute_path(artifact["path"], "artifact.path")
+    if artifact["format"] != "tar":
+        raise OpsError("unsupported_artifact", "only the deterministic tar format is supported")
+    if not isinstance(artifact["sha256"], str) or not SHA256.fullmatch(artifact["sha256"]):
+        raise OpsError("invalid_manifest", "artifact.sha256 must be lowercase SHA-256")
+    manifest["persistent_paths"] = persistent
+    return manifest
+
+
+def _archive_members(artifact: Path, target: ReleaseTarget) -> tuple[list[tarfile.TarInfo], int]:
+    members: list[tarfile.TarInfo] = []
+    total = 0
+    try:
+        archive = tarfile.open(artifact, mode="r:*")
+    except (tarfile.TarError, OSError) as exc:
+        raise OpsError("unsafe_archive", "artifact is not a readable tar archive") from exc
+    with archive:
+        for member in archive:
+            if len(members) >= MAX_ARCHIVE_FILES:
+                raise OpsError("unsafe_archive", "archive contains too many entries")
+            relative = PurePosixPath(member.name)
+            if relative.is_absolute() or not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+                raise OpsError("unsafe_archive", f"unsafe archive path: {member.name}")
+            if member.issym() or member.islnk() or member.isdev() or member.isfifo() or not (member.isfile() or member.isdir()):
+                raise OpsError("unsafe_archive", f"unsupported archive entry: {member.name}")
+            if str(relative) == ".ops-release.json":
+                raise OpsError("unsafe_archive", "artifact may not provide reserved release metadata")
+            for persistent in target.persistent_paths:
+                persistent_path = PurePosixPath(persistent)
+                if relative == persistent_path or relative.is_relative_to(persistent_path):
+                    raise OpsError("persistent_collision", f"artifact attempts to overwrite persistent path: {persistent}")
+            if member.isfile():
+                if member.size < 0:
+                    raise OpsError("unsafe_archive", "archive has a negative file size")
+                total += member.size
+                if total > target.max_unpacked_bytes:
+                    raise OpsError("unsafe_archive", "archive exceeds max_unpacked_bytes")
+            members.append(member)
+    return members, total
+
+
+def _current_release(target: ReleaseTarget) -> Path | None:
+    if not target.current_link.exists() and not target.current_link.is_symlink():
+        return None
+    if not target.current_link.is_symlink():
+        raise OpsError("unsafe_current", "current path must be a symbolic link")
+    try:
+        resolved = target.current_link.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise OpsError("unsafe_current", "current link is broken") from exc
+    return ensure_under(target.releases_root, resolved, "current link", require_exists=True)
+
+
+def _backup_evidence(target: ReleaseTarget) -> dict[str, Any] | None:
+    if not target.backup["required"]:
+        return None
+    check = {
+        "id": f"backup-{target.id}",
+        "type": "backup",
+        "enabled": True,
+        "project": target.project,
+        "resource_id": target.resource_id,
+        "timeout_seconds": 5,
+        "evidence_path": target.backup["evidence_path"],
+        "maximum_age_seconds": target.backup["maximum_age_seconds"],
+        "require_integrity": target.backup["require_integrity"],
+        "expected_target_id": target.id,
+    }
+    _validate_check(check, "target.backup")
+    try:
+        evidence_info = Path(target.backup["evidence_path"]).lstat()
+    except FileNotFoundError as exc:
+        raise OpsError("evidence_missing", "required backup evidence is missing") from exc
+    if not stat.S_ISREG(evidence_info.st_mode):
+        raise OpsError("evidence_untrusted", "backup evidence must be a regular non-symlink file")
+    if target.environment == "production" and (evidence_info.st_uid != 0 or evidence_info.st_mode & 0o022):
+        raise OpsError("evidence_untrusted", "production backup evidence must be root-owned and not writable by group/others")
+    return _probe_backup(check)
+
+
+def _validate_production_target_paths(target: ReleaseTarget) -> None:
+    for directory in {
+        target.incoming_root,
+        target.releases_root,
+        target.persistent_root,
+        target.current_link.parent,
+        target.audit_events_path.parent,
+        target.lock_root,
+    }:
+        try:
+            info = directory.lstat()
+        except FileNotFoundError as exc:
+            raise OpsError("target_unprepared", f"production directory is missing: {directory}") from exc
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise OpsError("target_untrusted", f"production directory must be protected and root-owned: {directory}")
+    if target.audit_events_path.exists():
+        audit_info = target.audit_events_path.lstat()
+        if not stat.S_ISREG(audit_info.st_mode) or audit_info.st_uid != 0 or audit_info.st_mode & 0o022:
+            raise OpsError("target_untrusted", "production release audit log is not protected")
+
+
+def build_release_plan(manifest_path: Path, targets_path: Path) -> tuple[dict[str, Any], dict[str, Any], ReleaseTarget]:
+    manifest = load_release_manifest(manifest_path)
+    targets = load_release_targets(targets_path)
+    target = targets.get(manifest["target_id"])
+    if target is None:
+        raise OpsError("unknown_target", "release target is not registered")
+    if not target.enabled:
+        raise OpsError("target_disabled", "release target is disabled")
+    if manifest["project"] != target.project:
+        raise OpsError("scope_mismatch", "release project does not match target project")
+    if tuple(manifest["persistent_paths"]) != target.persistent_paths:
+        raise OpsError("persistent_mismatch", "manifest persistent paths must exactly match the reviewed target")
+    if target.environment == "production":
+        _validate_production_target_paths(target)
+    artifact = Path(manifest["artifact"]["path"])
+    if artifact.is_symlink() or not artifact.is_file():
+        raise OpsError("artifact_missing", "artifact must be a regular non-symlink file")
+    ensure_under(target.incoming_root, artifact, "artifact", require_exists=True)
+    if target.environment == "production":
+        if os.geteuid() != 0:
+            raise OpsError("permission_denied", "production release planning must run as root")
+        artifact_info = artifact.lstat()
+        incoming_info = target.incoming_root.lstat()
+        if artifact_info.st_uid != 0 or artifact_info.st_mode & 0o022:
+            raise OpsError("artifact_untrusted", "production artifact must be root-owned and not writable by group/others")
+        if incoming_info.st_uid != 0 or incoming_info.st_mode & 0o022 or not stat.S_ISDIR(incoming_info.st_mode):
+            raise OpsError("artifact_untrusted", "production incoming_root must be a protected root-owned directory")
+    if artifact.stat().st_size > target.max_unpacked_bytes:
+        raise OpsError("artifact_too_large", "artifact exceeds max_unpacked_bytes before extraction")
+    actual_digest = sha256_file(artifact)
+    if actual_digest != manifest["artifact"]["sha256"]:
+        raise OpsError("checksum_mismatch", "artifact SHA-256 does not match the manifest")
+    members, unpacked_bytes = _archive_members(artifact, target)
+    current = _current_release(target)
+    backup = _backup_evidence(target)
+    try:
+        free_bytes = shutil.disk_usage(target.releases_root).free
+    except FileNotFoundError as exc:
+        raise OpsError("target_unprepared", "releases_root does not exist") from exc
+    required_free = max(target.min_free_bytes, unpacked_bytes * 2 + 16 * 1024 * 1024)
+    if free_bytes < required_free:
+        raise OpsError("insufficient_space", "not enough free space for staging and rollback", details={"free_bytes": free_bytes, "required_free_bytes": required_free})
+    target_material = {
+        "id": target.id,
+        "project": target.project,
+        "resource_id": target.resource_id,
+        "environment": target.environment,
+        "persistent_paths": list(target.persistent_paths),
+        "service_units": list(target.service_units),
+        "health_checks": list(target.health_checks),
+        "rollback_automatic": target.rollback_automatic,
+    }
+    stable = {
+        "schema_version": 1,
+        "manifest": manifest,
+        "target": target_material,
+        "artifact_sha256": actual_digest,
+        "current_release": current.name if current else None,
+        "archive_entries": len(members),
+        "unpacked_bytes": unpacked_bytes,
+        "backup_snapshot": backup["snapshot_id"] if backup else None,
+    }
+    plan_hash = sha256_bytes(canonical_json(stable))
+    plan = {
+        **stable,
+        "plan_hash": plan_hash,
+        "phase": "analysis",
+        "action_class": "C",
+        "dry_run": True,
+        "preconditions": {
+            "checksum": "ok",
+            "archive": "safe",
+            "free_space": "ok",
+            "backup": "ok" if backup else "not-required",
+            "approval": "required",
+            "resource_lock": "required",
+        },
+        "pipeline": [
+            "revalidate-plan-under-lock", "verify-approval", "stage-immutable-release", "preserve-allowlisted-data",
+            "stop-allowlisted-services", "atomic-switch", "start-allowlisted-services", "post-deploy-health-checks",
+            "success-or-preauthorised-rollback", "append-audit-event",
+        ],
+        "rollback": {"automatic": target.rollback_automatic, "target_release": current.name if current else None},
+    }
+    return plan, manifest, target
+
+
+def verify_approval(
+    plan: dict[str, Any],
+    target: ReleaseTarget,
+    approval_dir: Path,
+    *,
+    action: str = "ops.deploy_release.v1",
+) -> dict[str, Any]:
+    validate_absolute_path(str(approval_dir), "approval_dir")
+    if approval_dir.is_symlink() or not approval_dir.is_dir():
+        raise OpsError("approval_missing", "trusted approval directory is missing")
+    directory_info = approval_dir.stat()
+    if directory_info.st_mode & 0o022:
+        raise OpsError("approval_untrusted", "approval directory is group/world writable")
+    expected_owner = 0 if target.environment == "production" else os.geteuid()
+    if directory_info.st_uid != expected_owner:
+        raise OpsError("approval_untrusted", "approval directory has the wrong owner")
+    if target.environment == "production" and os.geteuid() != 0:
+        raise OpsError("permission_denied", "production release executor must run as root")
+    approval_path = approval_dir / f"{plan['plan_hash']}.json"
+    if approval_path.is_symlink():
+        raise OpsError("approval_untrusted", "approval file must not be a symlink")
+    approval = require_mapping(read_json(approval_path, max_bytes=64 * 1024), "approval")
+    fields = {
+        "schema_version", "action_class", "action", "resource_id", "target_id", "plan_hash",
+        "approved_by", "approved_at", "expires_at", "approval_id",
+    }
+    require_keys(approval, fields, fields, "approval")
+    info = approval_path.stat()
+    if info.st_uid != expected_owner or info.st_mode & 0o077:
+        raise OpsError("approval_untrusted", "approval file owner or mode is unsafe")
+    expected = {
+        "schema_version": 1,
+        "action_class": "C",
+        "action": action,
+        "resource_id": target.resource_id,
+        "target_id": target.id,
+        "plan_hash": plan["plan_hash"],
+    }
+    for key, value in expected.items():
+        if approval.get(key) != value:
+            raise OpsError("approval_mismatch", f"approval field does not match plan: {key}")
+    approver = require_identifier(approval["approved_by"], "approved_by")
+    if approver not in target.approvers:
+        raise OpsError("approval_untrusted", "approver is not allowlisted for this target")
+    require_identifier(approval["approval_id"], "approval_id")
+    approved_at = parse_time(approval["approved_at"], "approved_at")
+    expires_at = parse_time(approval["expires_at"], "expires_at")
+    now = utcnow()
+    if approved_at > now + dt.timedelta(minutes=5) or expires_at <= now or expires_at - approved_at > dt.timedelta(hours=24):
+        raise OpsError("approval_expired", "approval is not within its bounded validity window")
+    return approval
+
+
+def _extract_archive(artifact: Path, destination: Path, target: ReleaseTarget) -> None:
+    members, _ = _archive_members(artifact, target)
+    destination.mkdir(mode=0o750, parents=False, exist_ok=False)
+    try:
+        with tarfile.open(artifact, mode="r:*") as archive:
+            member_by_name = {member.name: member for member in archive.getmembers()}
+            for declared in members:
+                member = member_by_name[declared.name]
+                relative = PurePosixPath(member.name)
+                output = destination.joinpath(*relative.parts)
+                ensure_under(destination, output, "archive output")
+                validate_no_symlink_parents(output.parent, destination)
+                if member.isdir():
+                    output.mkdir(parents=True, exist_ok=True, mode=0o750)
+                    os.chmod(output, member.mode & 0o755)
+                    continue
+                output.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+                if output.exists() or output.is_symlink():
+                    raise OpsError("unsafe_archive", f"duplicate archive path: {member.name}")
+                source = archive.extractfile(member)
+                if source is None:
+                    raise OpsError("unsafe_archive", f"cannot read archive entry: {member.name}")
+                descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_CLOEXEC | os.O_NOFOLLOW, member.mode & 0o755)
+                copied = 0
+                with os.fdopen(descriptor, "wb") as handle:
+                    while True:
+                        chunk = source.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        copied += len(chunk)
+                        if copied > member.size:
+                            raise OpsError("unsafe_archive", f"archive entry exceeded declared size: {member.name}")
+                        handle.write(chunk)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                if copied != member.size:
+                    raise OpsError("unsafe_archive", f"archive entry size mismatch: {member.name}")
+        for persistent in target.persistent_paths:
+            shared = target.persistent_root.joinpath(*PurePosixPath(persistent).parts)
+            ensure_under(target.persistent_root, shared, "persistent target")
+            validate_no_symlink_parents(shared.parent, target.persistent_root)
+            if shared.exists() and (shared.is_symlink() or not shared.is_dir()):
+                raise OpsError("unsafe_persistent", f"persistent target is not a real directory: {persistent}")
+            shared.mkdir(parents=True, exist_ok=True, mode=0o750)
+            link = destination.joinpath(*PurePosixPath(persistent).parts)
+            ensure_under(destination, link, "persistent link")
+            link.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+            if link.exists() or link.is_symlink():
+                raise OpsError("persistent_collision", f"release already contains persistent path: {persistent}")
+            os.symlink(shared, link, target_is_directory=True)
+    except Exception:
+        if destination.exists() and destination.parent == target.releases_root:
+            shutil.rmtree(destination)
+        raise
+
+
+def _freeze_release(path: Path) -> None:
+    """Remove write bits from staged release content without following links."""
+    for directory, directories, files in os.walk(path, topdown=False, followlinks=False):
+        directory_path = Path(directory)
+        for name in files:
+            item = directory_path / name
+            if item.is_symlink():
+                raise OpsError("unsafe_release", f"unexpected file symlink while freezing: {item}")
+            mode = item.stat().st_mode
+            os.chmod(item, 0o550 if mode & 0o111 else 0o440)
+        for name in directories:
+            item = directory_path / name
+            if item.is_symlink():
+                continue  # controlled persistent link; never chmod its target
+            os.chmod(item, 0o550)
+        os.chmod(directory_path, 0o550)
+
+
+def _stage_release(plan: dict[str, Any], manifest: dict[str, Any], target: ReleaseTarget) -> tuple[Path, str]:
+    if sha256_file(Path(manifest["artifact"]["path"])) != plan["artifact_sha256"]:
+        raise OpsError("plan_changed", "artifact changed after the approved plan was calculated")
+    final = target.releases_root / manifest["release_id"]
+    ensure_under(target.releases_root, final, "release destination")
+    if final.exists() or final.is_symlink():
+        if final.is_symlink() or not final.is_dir():
+            raise OpsError("release_conflict", "release destination exists with unsafe type")
+        metadata_path = final / ".ops-release.json"
+        metadata = require_mapping(read_json(metadata_path, max_bytes=64 * 1024), "release metadata")
+        if metadata.get("plan_hash") != plan["plan_hash"] or metadata.get("artifact_sha256") != plan["artifact_sha256"]:
+            raise OpsError("release_conflict", "existing release does not match this immutable plan")
+        return final, "existing"
+    staging = target.releases_root / f".{manifest['release_id']}.staging.{os.getpid()}"
+    if staging.exists() or staging.is_symlink():
+        raise OpsError("stage_conflict", "staging path already exists")
+    _extract_archive(Path(manifest["artifact"]["path"]), staging, target)
+    metadata = {
+        "schema_version": 1,
+        "release_id": manifest["release_id"],
+        "version": manifest["version"],
+        "commit": manifest["commit"],
+        "build": manifest["build"],
+        "artifact_sha256": plan["artifact_sha256"],
+        "plan_hash": plan["plan_hash"],
+        "staged_at": isoformat(),
+        "persistent_paths": list(target.persistent_paths),
+    }
+    atomic_json(staging / ".ops-release.json", metadata, mode=0o640)
+    _freeze_release(staging)
+    try:
+        os.replace(staging, final)
+    except Exception:
+        if staging.exists():
+            shutil.rmtree(staging)
+        raise
+    return final, "created"
+
+
+def _switch_current(target: ReleaseTarget, release: Path | None) -> None:
+    target.current_link.parent.mkdir(parents=True, exist_ok=True)
+    validate_no_symlink_parents(target.current_link.parent)
+    if target.current_link.exists() and not target.current_link.is_symlink():
+        raise OpsError("unsafe_current", "current path is not a symlink")
+    if release is None:
+        target.current_link.unlink(missing_ok=True)
+        return
+    ensure_under(target.releases_root, release, "release switch target", require_exists=True)
+    temporary = target.current_link.parent / f".{target.current_link.name}.{os.getpid()}.new"
+    temporary.unlink(missing_ok=True)
+    try:
+        os.symlink(release, temporary, target_is_directory=True)
+        os.replace(temporary, target.current_link)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _control_services(target: ReleaseTarget, verb: str) -> None:
+    if verb not in {"start", "stop"}:
+        raise AssertionError("unsupported service verb")
+    for unit in target.service_units:
+        result = _run_bounded(["/usr/bin/systemctl", verb, unit], 45)
+        if result.returncode != 0:
+            raise OpsError("service_failed", f"systemctl {verb} failed for allowlisted unit: {unit}")
+
+
+def _release_health(target: ReleaseTarget) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for check in target.health_checks:
+        base = {"id": check["id"], "type": check["type"], "resource_id": target.resource_id}
+        try:
+            with deadline(check["timeout_seconds"]):
+                evidence = PROBES[check["type"]](check)
+            ok = bool(evidence.pop("ok"))
+            results.append({**base, "status": "ok" if ok else "failed", "evidence": evidence})
+        except OpsError as exc:
+            results.append({**base, "status": "error", "error": exc.code, "message": exc.message})
+    return results
+
+
+def apply_release(
+    manifest_path: Path,
+    targets_path: Path,
+    approval_dir: Path,
+    *,
+    execute: bool,
+) -> dict[str, Any]:
+    plan, manifest, target = build_release_plan(manifest_path, targets_path)
+    if not execute:
+        raise OpsError("execute_required", "release apply is class C and refuses without --execute", details={"plan_hash": plan["plan_hash"]})
+    approval = verify_approval(plan, target, approval_dir)
+    with resource_lock(target.resource_id, target.lock_root):
+        locked_plan, locked_manifest, locked_target = build_release_plan(manifest_path, targets_path)
+        if locked_plan["plan_hash"] != plan["plan_hash"]:
+            raise OpsError("plan_changed", "release plan changed while acquiring the resource lock")
+        verify_approval(locked_plan, locked_target, approval_dir)
+        previous = _current_release(locked_target)
+        append_event(
+            locked_target.audit_events_path,
+            {
+                "phase": "action",
+                "event": "release_apply_started",
+                "action_class": "C",
+                "project": locked_target.project,
+                "resource_id": locked_target.resource_id,
+                "target_id": locked_target.id,
+                "release_id": locked_manifest["release_id"],
+                "plan_hash": locked_plan["plan_hash"],
+                "approval_id": approval["approval_id"],
+                "approved_by": approval["approved_by"],
+            },
+        )
+        final, stage_status = _stage_release(locked_plan, locked_manifest, locked_target)
+        switched = False
+        rollback_status = "not-needed"
+        try:
+            _control_services(locked_target, "stop")
+            _switch_current(locked_target, final)
+            switched = True
+            _control_services(locked_target, "start")
+            health = _release_health(locked_target)
+            if any(result["status"] != "ok" for result in health):
+                raise OpsError("health_failed", "one or more post-deployment health checks failed", details={"health": health})
+        except Exception as exc:
+            rollback_error: str | None = None
+            if switched and locked_target.rollback_automatic:
+                try:
+                    _control_services(locked_target, "stop")
+                    _switch_current(locked_target, previous)
+                    _control_services(locked_target, "start")
+                    rollback_status = "completed"
+                except Exception as rollback_exc:  # captured, audited, then fail closed
+                    rollback_status = "failed"
+                    rollback_error = rollback_exc.__class__.__name__
+            elif switched:
+                rollback_status = "approval-required"
+            append_event(
+                locked_target.audit_events_path,
+                {
+                    "phase": "action",
+                    "event": "release_apply_failed",
+                    "action_class": "C",
+                    "project": locked_target.project,
+                    "resource_id": locked_target.resource_id,
+                    "target_id": locked_target.id,
+                    "release_id": locked_manifest["release_id"],
+                    "plan_hash": locked_plan["plan_hash"],
+                    "error": exc.code if isinstance(exc, OpsError) else exc.__class__.__name__,
+                    "rollback": rollback_status,
+                    "rollback_error": rollback_error,
+                },
+            )
+            if rollback_error:
+                raise OpsError("rollback_failed", "deployment failed and automatic rollback also failed") from exc
+            if isinstance(exc, OpsError):
+                exc.details.setdefault("rollback", rollback_status)
+                raise
+            raise OpsError("deploy_failed", "deployment failed", details={"rollback": rollback_status}) from exc
+        append_event(
+            locked_target.audit_events_path,
+            {
+                "phase": "action",
+                "event": "release_apply_succeeded",
+                "action_class": "C",
+                "project": locked_target.project,
+                "resource_id": locked_target.resource_id,
+                "target_id": locked_target.id,
+                "release_id": locked_manifest["release_id"],
+                "plan_hash": locked_plan["plan_hash"],
+                "previous_release": previous.name if previous else None,
+                "stage": stage_status,
+                "health": health,
+            },
+        )
+        return {
+            "ok": True,
+            "phase": "action",
+            "action_class": "C",
+            "target_id": locked_target.id,
+            "resource_id": locked_target.resource_id,
+            "release_id": locked_manifest["release_id"],
+            "previous_release": previous.name if previous else None,
+            "stage": stage_status,
+            "health": health,
+            "rollback": rollback_status,
+            "plan_hash": locked_plan["plan_hash"],
+        }
+
+
+def build_rollback_plan(targets_path: Path, target_id: str, release_id: str) -> tuple[dict[str, Any], ReleaseTarget, Path]:
+    targets = load_release_targets(targets_path)
+    target = targets.get(require_identifier(target_id, "target_id"))
+    if target is None:
+        raise OpsError("unknown_target", "release target is not registered")
+    if not target.enabled:
+        raise OpsError("target_disabled", "release target is disabled")
+    destination = target.releases_root / require_identifier(release_id, "release_id")
+    ensure_under(target.releases_root, destination, "rollback release", require_exists=True)
+    if destination.is_symlink() or not destination.is_dir():
+        raise OpsError("release_unknown", "rollback release is not an immutable directory")
+    metadata = require_mapping(read_json(destination / ".ops-release.json", max_bytes=64 * 1024), "release metadata")
+    if metadata.get("release_id") != release_id or not isinstance(metadata.get("plan_hash"), str) or not SHA256.fullmatch(metadata["plan_hash"]):
+        raise OpsError("release_unknown", "rollback release metadata is invalid")
+    current = _current_release(target)
+    stable = {
+        "schema_version": 1,
+        "action": "ops.rollback_release.v1",
+        "target_id": target.id,
+        "resource_id": target.resource_id,
+        "project": target.project,
+        "current_release": current.name if current else None,
+        "destination_release": release_id,
+        "destination_plan_hash": metadata["plan_hash"],
+        "health_checks": list(target.health_checks),
+        "service_units": list(target.service_units),
+    }
+    return (
+        {
+            **stable,
+            "plan_hash": sha256_bytes(canonical_json(stable)),
+            "phase": "analysis",
+            "action_class": "C",
+            "dry_run": True,
+            "rollback": {"on_failure": current.name if current else None},
+        },
+        target,
+        destination,
+    )
+
+
+def apply_rollback(
+    targets_path: Path,
+    target_id: str,
+    release_id: str,
+    approval_dir: Path,
+    *,
+    execute: bool,
+) -> dict[str, Any]:
+    plan, target, destination = build_rollback_plan(targets_path, target_id, release_id)
+    if not execute:
+        raise OpsError("execute_required", "rollback apply is class C and refuses without --execute", details={"plan_hash": plan["plan_hash"]})
+    approval = verify_approval(plan, target, approval_dir, action="ops.rollback_release.v1")
+    with resource_lock(target.resource_id, target.lock_root):
+        locked_plan, locked_target, locked_destination = build_rollback_plan(targets_path, target_id, release_id)
+        if locked_plan["plan_hash"] != plan["plan_hash"]:
+            raise OpsError("plan_changed", "rollback plan changed while acquiring the resource lock")
+        verify_approval(locked_plan, locked_target, approval_dir, action="ops.rollback_release.v1")
+        previous = _current_release(locked_target)
+        if previous == locked_destination:
+            health = _release_health(locked_target)
+            if any(result["status"] != "ok" for result in health):
+                raise OpsError("health_failed", "current rollback target is selected but unhealthy", details={"health": health})
+            return {"ok": True, "phase": "action", "action_class": "C", "target_id": target_id, "release_id": release_id, "status": "already-current", "health": health, "plan_hash": plan["plan_hash"]}
+        append_event(
+            locked_target.audit_events_path,
+            {
+                "phase": "action", "event": "release_rollback_started", "action_class": "C",
+                "project": locked_target.project, "resource_id": locked_target.resource_id,
+                "target_id": locked_target.id, "release_id": release_id, "plan_hash": locked_plan["plan_hash"],
+                "approval_id": approval["approval_id"], "approved_by": approval["approved_by"],
+            },
+        )
+        switched = False
+        try:
+            _control_services(locked_target, "stop")
+            _switch_current(locked_target, locked_destination)
+            switched = True
+            _control_services(locked_target, "start")
+            health = _release_health(locked_target)
+            if any(result["status"] != "ok" for result in health):
+                raise OpsError("health_failed", "rollback target health checks failed", details={"health": health})
+        except Exception as exc:
+            restore = "not-switched"
+            try:
+                if switched:
+                    _control_services(locked_target, "stop")
+                    _switch_current(locked_target, previous)
+                    _control_services(locked_target, "start")
+                    restore = "previous-restored"
+            except Exception as restore_exc:
+                append_event(locked_target.audit_events_path, {"phase": "action", "event": "release_rollback_failed", "action_class": "C", "project": locked_target.project, "resource_id": locked_target.resource_id, "target_id": locked_target.id, "release_id": release_id, "plan_hash": locked_plan["plan_hash"], "error": exc.__class__.__name__, "restore": "failed", "restore_error": restore_exc.__class__.__name__})
+                raise OpsError("rollback_failed", "rollback failed and previous release could not be restored") from exc
+            append_event(locked_target.audit_events_path, {"phase": "action", "event": "release_rollback_failed", "action_class": "C", "project": locked_target.project, "resource_id": locked_target.resource_id, "target_id": locked_target.id, "release_id": release_id, "plan_hash": locked_plan["plan_hash"], "error": exc.code if isinstance(exc, OpsError) else exc.__class__.__name__, "restore": restore})
+            if isinstance(exc, OpsError):
+                exc.details.setdefault("restore", restore)
+                raise
+            raise OpsError("rollback_failed", "rollback failed; previous release was restored", details={"restore": restore}) from exc
+        append_event(locked_target.audit_events_path, {"phase": "action", "event": "release_rollback_succeeded", "action_class": "C", "project": locked_target.project, "resource_id": locked_target.resource_id, "target_id": locked_target.id, "release_id": release_id, "plan_hash": locked_plan["plan_hash"], "previous_release": previous.name if previous else None, "health": health})
+        return {"ok": True, "phase": "action", "action_class": "C", "target_id": target_id, "release_id": release_id, "previous_release": previous.name if previous else None, "health": health, "plan_hash": locked_plan["plan_hash"]}
+
+
+@dataclasses.dataclass(frozen=True)
+class ConfigTarget:
+    id: str
+    enabled: bool
+    project: str
+    resource_id: str
+    current_path: Path
+    candidate_root: Path
+    validator: str
+    max_bytes: int
+    lock_root: Path
+
+
+def load_config_targets(path: Path) -> dict[str, ConfigTarget]:
+    root = require_mapping(read_json(path), "config target registry")
+    require_keys(root, {"schema_version", "targets"}, {"schema_version", "targets"}, "config target registry")
+    if root["schema_version"] != 1:
+        raise OpsError("unsupported_version", "config target registry version is unsupported")
+    fields = {"id", "enabled", "project", "resource_id", "current_path", "candidate_root", "validator", "max_bytes", "lock_root"}
+    targets: dict[str, ConfigTarget] = {}
+    for index, raw in enumerate(require_list(root["targets"], "targets")):
+        item = require_mapping(raw, f"targets[{index}]")
+        require_keys(item, fields, fields, f"targets[{index}]")
+        target_id = require_identifier(item["id"], f"targets[{index}].id")
+        if target_id in targets:
+            raise OpsError("duplicate_target", f"duplicate config target: {target_id}")
+        if not isinstance(item["enabled"], bool):
+            raise OpsError("invalid_target", f"targets[{index}].enabled must be boolean")
+        if item["validator"] not in {"text", "json"}:
+            raise OpsError("invalid_target", f"targets[{index}].validator is unsupported")
+        max_bytes = item["max_bytes"]
+        if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or not 1 <= max_bytes <= MAX_CONFIG_BYTES:
+            raise OpsError("invalid_target", f"targets[{index}].max_bytes is invalid")
+        targets[target_id] = ConfigTarget(
+            id=target_id,
+            enabled=item["enabled"],
+            project=require_identifier(item["project"], f"targets[{index}].project"),
+            resource_id=require_identifier(item["resource_id"], f"targets[{index}].resource_id"),
+            current_path=validate_absolute_path(item["current_path"], f"targets[{index}].current_path"),
+            candidate_root=validate_absolute_path(item["candidate_root"], f"targets[{index}].candidate_root"),
+            validator=item["validator"],
+            max_bytes=max_bytes,
+            lock_root=validate_absolute_path(item["lock_root"], f"targets[{index}].lock_root"),
+        )
+    return targets
+
+
+def _read_config(path: Path, maximum: int) -> str:
+    if path.is_symlink() or not path.is_file():
+        raise OpsError("file_missing", f"configuration is not a regular non-symlink file: {path}")
+    if path.stat().st_size > maximum:
+        raise OpsError("file_too_large", f"configuration exceeds {maximum} bytes")
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise OpsError("invalid_config", "configuration must be UTF-8 text") from exc
+
+
+def redact_config(text: str) -> tuple[str, int]:
+    output: list[str] = []
+    redacted = 0
+    inside_private_key = False
+    for line in text.splitlines(keepends=True):
+        if "-----BEGIN" in line and "PRIVATE KEY-----" in line:
+            inside_private_key = True
+            output.append("<private-key-redacted>\n")
+            redacted += 1
+            continue
+        if inside_private_key:
+            redacted += 1
+            if "-----END" in line and "PRIVATE KEY-----" in line:
+                inside_private_key = False
+            continue
+        stripped_line = line.rstrip("\r\n")
+        separators = [index for index in (stripped_line.find("="), stripped_line.find(":")) if index >= 0]
+        separator = min(separators) if separators else -1
+        key = stripped_line[:separator] if separator >= 0 else ""
+        if separator >= 0 and SECRET_NAME.search(key):
+            suffix = "\n" if line.endswith("\n") else ""
+            output.append(stripped_line[: separator + 1] + " <redacted>" + suffix)
+            redacted += 1
+        else:
+            output.append(line)
+    return "".join(output), redacted
+
+
+def config_diff(registry_path: Path, target_id: str, candidate_path: Path) -> dict[str, Any]:
+    targets = load_config_targets(registry_path)
+    target = targets.get(require_identifier(target_id, "target_id"))
+    if target is None:
+        raise OpsError("unknown_target", "configuration target is not registered")
+    if not target.enabled:
+        raise OpsError("target_disabled", "configuration target is disabled")
+    candidate = ensure_under(target.candidate_root, candidate_path, "candidate", require_exists=True)
+    current = target.current_path
+    current_text = _read_config(current, target.max_bytes)
+    candidate_text = _read_config(candidate, target.max_bytes)
+    validation = "text-ok"
+    if target.validator == "json":
+        try:
+            json.loads(candidate_text)
+        except json.JSONDecodeError as exc:
+            raise OpsError("validation_failed", f"candidate JSON is invalid at line {exc.lineno}") from exc
+        validation = "json-ok"
+    current_safe, redacted_current = redact_config(current_text)
+    candidate_safe, redacted_candidate = redact_config(candidate_text)
+    diff = "".join(
+        difflib.unified_diff(
+            current_safe.splitlines(keepends=True),
+            candidate_safe.splitlines(keepends=True),
+            fromfile=f"{target.id}:before",
+            tofile=f"{target.id}:candidate",
+            n=3,
+        )
+    )
+    if len(diff.encode()) > 512 * 1024:
+        raise OpsError("output_too_large", "configuration diff exceeded the bounded output size")
+    return {
+        "schema_version": 1,
+        "phase": "observation",
+        "action_class": "A",
+        "target_id": target.id,
+        "resource_id": target.resource_id,
+        "project": target.project,
+        "current_sha256": sha256_bytes(current_text.encode()),
+        "candidate_sha256": sha256_bytes(candidate_text.encode()),
+        "changed": current_text != candidate_text,
+        "validator": validation,
+        "redacted_lines": redacted_current + redacted_candidate,
+        "diff": diff,
+        "applied": False,
+    }
+
+
+def load_retention_policy(path: Path) -> list[dict[str, Any]]:
+    policy = require_mapping(read_json(path), "retention policy")
+    require_keys(policy, {"schema_version", "rules"}, {"schema_version", "rules"}, "retention policy")
+    if policy["schema_version"] != 1:
+        raise OpsError("unsupported_version", "retention policy version is unsupported")
+    fields = {"id", "enabled", "root", "pattern", "retain_days", "action", "quarantine_root", "exclude"}
+    rules: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(require_list(policy["rules"], "rules")):
+        rule = require_mapping(raw, f"rules[{index}]")
+        require_keys(rule, fields, fields, f"rules[{index}]")
+        rule_id = require_identifier(rule["id"], f"rules[{index}].id")
+        if rule_id in seen:
+            raise OpsError("duplicate_rule", f"duplicate retention rule: {rule_id}")
+        seen.add(rule_id)
+        if not isinstance(rule["enabled"], bool) or rule["action"] != "quarantine":
+            raise OpsError("invalid_rule", f"retention rule is invalid: {rule_id}")
+        root = validate_absolute_path(rule["root"], f"rules[{index}].root")
+        quarantine = validate_absolute_path(rule["quarantine_root"], f"rules[{index}].quarantine_root")
+        if root == quarantine or root.is_relative_to(quarantine) or quarantine.is_relative_to(root):
+            raise OpsError("invalid_rule", f"retention and quarantine roots must not overlap: {rule_id}")
+        pattern = require_string(rule["pattern"], f"rules[{index}].pattern", maximum=128)
+        if "/" in pattern or pattern in {"*", "**"}:
+            raise OpsError("invalid_rule", f"retention pattern is too broad: {rule_id}")
+        days = rule["retain_days"]
+        if not isinstance(days, int) or isinstance(days, bool) or not 1 <= days <= 3650:
+            raise OpsError("invalid_rule", f"retain_days is invalid: {rule_id}")
+        exclude = require_list(rule["exclude"], f"rules[{index}].exclude")
+        if any(not isinstance(item, str) or "/" in item or not item for item in exclude):
+            raise OpsError("invalid_rule", f"exclude is invalid: {rule_id}")
+        rules.append({**rule, "root": root, "quarantine_root": quarantine})
+    return rules
+
+
+def retention_plan(policy_path: Path, *, rule_id: str | None = None, now: dt.datetime | None = None) -> dict[str, Any]:
+    timestamp = (now or utcnow()).timestamp()
+    candidates: list[dict[str, Any]] = []
+    selected_rules = []
+    for rule in load_retention_policy(policy_path):
+        if rule_id is not None and rule["id"] != require_identifier(rule_id, "rule_id"):
+            continue
+        selected_rules.append(rule["id"])
+        if not rule["enabled"] or not rule["root"].is_dir() or rule["root"].is_symlink():
+            continue
+        cutoff = timestamp - rule["retain_days"] * 86400
+        for item in sorted(rule["root"].iterdir()):
+            if item.name in rule["exclude"] or not fnmatch.fnmatch(item.name, rule["pattern"]):
+                continue
+            if item.is_symlink() or not item.is_file() or item.stat().st_mtime >= cutoff:
+                continue
+            candidates.append(
+                {
+                    "rule_id": rule["id"],
+                    "path": str(item),
+                    "size_bytes": item.stat().st_size,
+                    "mtime": isoformat(dt.datetime.fromtimestamp(item.stat().st_mtime, tz=dt.timezone.utc)),
+                    "sha256": sha256_file(item),
+                    "destination": str(rule["quarantine_root"] / item.name),
+                }
+            )
+    if rule_id is not None and rule_id not in selected_rules:
+        raise OpsError("unknown_rule", "retention rule is not registered")
+    stable = {"schema_version": 1, "rules": selected_rules, "candidates": candidates}
+    return {
+        **stable,
+        "phase": "analysis",
+        "action_class": "C",
+        "generated_at": isoformat(),
+        "plan_hash": sha256_bytes(canonical_json(stable)),
+        "candidate_count": len(candidates),
+        "bytes": sum(item["size_bytes"] for item in candidates),
+        "applied": False,
+    }
+
+
+def load_skill_registry(path: Path, skills_root: Path, repository_root: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    registry = require_mapping(read_json(path), "skill registry")
+    require_keys(registry, {"schema_version", "skills"}, {"schema_version", "skills"}, "skill registry")
+    if registry["schema_version"] != 1:
+        raise OpsError("unsupported_version", "skill registry version is unsupported")
+    required_fields = {"name", "version", "automation", "project", "permissions", "tests", "review_required"}
+    fields = required_fields | {"promotion_evidence"}
+    results: list[dict[str, Any]] = []
+    names: set[str] = set()
+    for index, raw in enumerate(require_list(registry["skills"], "skills")):
+        skill = require_mapping(raw, f"skills[{index}]")
+        require_keys(skill, fields, required_fields, f"skills[{index}]")
+        name = require_identifier(skill["name"], f"skills[{index}].name")
+        if name in names:
+            raise OpsError("duplicate_skill", f"duplicate skill: {name}")
+        names.add(name)
+        if not isinstance(skill["version"], int) or isinstance(skill["version"], bool) or skill["version"] < 1:
+            raise OpsError("invalid_skill", f"invalid version for skill: {name}")
+        if skill["automation"] not in {"manual", "semi-automatic", "automatic"}:
+            raise OpsError("invalid_skill", f"invalid automation level for skill: {name}")
+        require_identifier(skill["project"], f"skills[{index}].project")
+        if not isinstance(skill["review_required"], bool):
+            raise OpsError("invalid_skill", f"review_required must be boolean: {name}")
+        if "promotion_evidence" in skill:
+            promotion = require_mapping(skill["promotion_evidence"], f"{name}.promotion_evidence")
+            promotion_fields = {"approval_id", "reviewed_by", "git_commit", "successful_executions", "created_at"}
+            require_keys(promotion, promotion_fields, promotion_fields, f"{name}.promotion_evidence")
+            require_identifier(promotion["approval_id"], f"{name}.promotion_evidence.approval_id")
+            require_identifier(promotion["reviewed_by"], f"{name}.promotion_evidence.reviewed_by")
+            if not GIT_REVISION.fullmatch(require_string(promotion["git_commit"], f"{name}.promotion_evidence.git_commit", maximum=64)):
+                raise OpsError("invalid_skill", f"promotion Git commit is invalid: {name}")
+            if not isinstance(promotion["successful_executions"], int) or promotion["successful_executions"] < 0:
+                raise OpsError("invalid_skill", f"promotion execution count is invalid: {name}")
+            parse_time(promotion["created_at"], f"{name}.promotion_evidence.created_at")
+        permissions = require_list(skill["permissions"], f"{name}.permissions")
+        if not permissions or len(permissions) != len(set(permissions)) or any(not isinstance(item, str) or not item or len(item) > 128 for item in permissions):
+            raise OpsError("invalid_skill", f"permissions are invalid: {name}")
+        tests = require_list(skill["tests"], f"{name}.tests")
+        if not tests:
+            raise OpsError("invalid_skill", f"no test is declared: {name}")
+        skill_path = skills_root / name / "SKILL.md"
+        if skill_path.is_symlink() or not skill_path.is_file() or not skill_path.resolve().is_relative_to(skills_root.resolve()):
+            raise OpsError("skill_missing", f"SKILL.md is missing or unsafe: {name}")
+        if skill_path.stat().st_size > 256 * 1024:
+            raise OpsError("file_too_large", f"SKILL.md is too large: {name}")
+        text = skill_path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        if len(lines) < 5 or lines[0] != "---" or "---" not in lines[1:10]:
+            raise OpsError("frontmatter_invalid", f"SKILL.md frontmatter is invalid: {name}")
+        end = lines[1:10].index("---") + 1
+        metadata: dict[str, str] = {}
+        for line in lines[1:end]:
+            if ":" not in line:
+                raise OpsError("frontmatter_invalid", f"SKILL.md metadata line is invalid: {name}")
+            key, value = line.split(":", 1)
+            metadata[key.strip()] = value.strip()
+        if metadata.get("name") != name or not metadata.get("description"):
+            raise OpsError("frontmatter_invalid", f"SKILL.md name or description does not match registry: {name}")
+        checked_tests: list[str] = []
+        for test in tests:
+            relative = Path(require_string(test, f"{name}.tests", maximum=512))
+            if relative.is_absolute() or ".." in relative.parts:
+                raise OpsError("invalid_skill", f"test path escapes repository: {name}")
+            test_path = repository_root / relative
+            if test_path.is_symlink() or not test_path.is_file() or not test_path.resolve().is_relative_to(repository_root.resolve()):
+                raise OpsError("tests_missing", f"declared test is missing: {test}")
+            checked_tests.append(str(relative))
+        results.append({"name": name, "version": skill["version"], "automation": skill["automation"], "tests": checked_tests, "valid": True})
+    return registry, results
+
+
+def validate_skills(path: Path, skills_root: Path, repository_root: Path) -> dict[str, Any]:
+    _, results = load_skill_registry(path, skills_root, repository_root)
+    return {"ok": True, "phase": "observation", "skills": results, "count": len(results), "promoted": False}
+
+
+def promote_skill_candidate(
+    registry_path: Path,
+    skills_root: Path,
+    repository_root: Path,
+    skill_name: str,
+    target_level: str,
+    evidence_path: Path,
+    output_path: Path,
+) -> dict[str, Any]:
+    registry, _ = load_skill_registry(registry_path, skills_root, repository_root)
+    name = require_identifier(skill_name, "skill_name")
+    skill = next((item for item in registry["skills"] if item["name"] == name), None)
+    if skill is None:
+        raise OpsError("unknown_skill", "skill is not registered")
+    transitions = {"manual": "semi-automatic", "semi-automatic": "automatic"}
+    if transitions.get(skill["automation"]) != target_level:
+        raise OpsError("invalid_transition", "skill automation can only advance one reviewed level")
+    evidence = require_mapping(read_json(evidence_path, max_bytes=128 * 1024), "promotion evidence")
+    fields = {
+        "schema_version", "skill", "version", "tests_passed", "inspection_approved", "permissions_reviewed",
+        "reviewed_by", "git_commit", "approval_id", "executions", "created_at",
+    }
+    require_keys(evidence, fields, fields, "promotion evidence")
+    if evidence["schema_version"] != 1 or evidence["skill"] != name or evidence["version"] != skill["version"]:
+        raise OpsError("evidence_mismatch", "promotion evidence does not identify this skill version")
+    for key in ("tests_passed", "inspection_approved", "permissions_reviewed"):
+        if evidence[key] is not True:
+            raise OpsError("review_missing", f"promotion evidence requires {key}=true")
+    require_identifier(evidence["reviewed_by"], "reviewed_by")
+    require_identifier(evidence["approval_id"], "approval_id")
+    if not GIT_REVISION.fullmatch(require_string(evidence["git_commit"], "git_commit", maximum=64)):
+        raise OpsError("review_missing", "promotion evidence requires a Git commit")
+    created_at = parse_time(evidence["created_at"], "created_at")
+    if utcnow() - created_at > dt.timedelta(days=30) or created_at > utcnow() + dt.timedelta(minutes=5):
+        raise OpsError("evidence_stale", "promotion evidence is outside its validity window")
+    executions = require_mapping(evidence["executions"], "executions")
+    require_keys(executions, {"successful", "failed"}, {"successful", "failed"}, "executions")
+    if any(not isinstance(executions[key], int) or isinstance(executions[key], bool) or executions[key] < 0 for key in executions):
+        raise OpsError("invalid_evidence", "execution counters must be non-negative integers")
+    minimum = 3 if target_level == "semi-automatic" else 10
+    if executions["successful"] < minimum:
+        raise OpsError("insufficient_successes", f"promotion to {target_level} requires at least {minimum} successful executions")
+    if executions["failed"] != 0:
+        raise OpsError("failures_present", "promotion requires zero failed reviewed executions")
+    candidate = json.loads(json.dumps(registry))
+    candidate_skill = next(item for item in candidate["skills"] if item["name"] == name)
+    candidate_skill["automation"] = target_level
+    candidate_skill["promotion_evidence"] = {
+        "approval_id": evidence["approval_id"],
+        "reviewed_by": evidence["reviewed_by"],
+        "git_commit": evidence["git_commit"],
+        "successful_executions": executions["successful"],
+        "created_at": evidence["created_at"],
+    }
+    # The output is deliberately a separate candidate. Installation requires a
+    # reviewed diff and Git commit; this function never replaces the live file.
+    atomic_json(output_path, candidate, mode=0o640)
+    return {
+        "ok": True,
+        "phase": "analysis",
+        "action_class": "C",
+        "skill": name,
+        "from": skill["automation"],
+        "to": target_level,
+        "candidate_path": str(output_path),
+        "installed": False,
+        "candidate_sha256": sha256_file(output_path),
+    }
+
+
+def read_events(path: Path | None) -> list[dict[str, Any]]:
+    if path is None or not path.exists():
+        return []
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 64 * 1024 * 1024:
+        raise OpsError("unsafe_audit_log", "event log is missing, linked, or too large")
+    events: list[dict[str, Any]] = []
+    previous = "0" * 64
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            if len(events) >= 100_000:
+                raise OpsError("unsafe_audit_log", "event log contains too many events")
+            try:
+                event = require_mapping(json.loads(line), f"event line {line_number}")
+            except json.JSONDecodeError as exc:
+                raise OpsError("audit_chain_invalid", f"event line {line_number} is invalid JSON") from exc
+            event_hash = event.get("event_hash")
+            if event.get("previous_hash") != previous or not isinstance(event_hash, str) or not SHA256.fullmatch(event_hash):
+                raise OpsError("audit_chain_invalid", f"event chain is invalid at line {line_number}")
+            unsigned = dict(event)
+            unsigned.pop("event_hash")
+            if sha256_bytes(canonical_json(unsigned)) != event_hash:
+                raise OpsError("audit_chain_invalid", f"event hash is invalid at line {line_number}")
+            previous = event_hash
+            events.append(event)
+    return events
+
+
+def _prom_label(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def build_report(events_path: Path | None, checks_path: Path | None) -> tuple[str, dict[str, Any], str]:
+    events = read_events(events_path)
+    checks: dict[str, Any] = {"results": [], "summary": {}}
+    if checks_path is not None and checks_path.exists():
+        checks = require_mapping(read_json(checks_path), "check results")
+        require_list(checks.get("results"), "check results.results")
+    check_counts = Counter(item.get("status", "unknown") for item in checks["results"] if isinstance(item, dict))
+    event_counts = Counter(event.get("event", "unknown") for event in events)
+    failures = check_counts["failed"] + check_counts["error"] + event_counts["release_apply_failed"]
+    successful_checks = check_counts["ok"]
+    total_checks = sum(check_counts.values())
+    if failures:
+        short = f"Ops: {failures} anomalie(s). Checks {successful_checks}/{total_checks} OK. Intervention requise; rapport detaille disponible."
+    elif total_checks:
+        short = f"Ops: checks {successful_checks}/{total_checks} OK, aucune anomalie bloquante. Rapport detaille disponible."
+    else:
+        short = "Ops: aucune sonde active; etat distant inconnu. Activation d'un inventaire approuve requise."
+    detail = {
+        "schema_version": 1,
+        "generated_at": isoformat(),
+        "summary": short,
+        "checks": {"counts": dict(sorted(check_counts.items())), "results": checks["results"]},
+        "actions": {
+            "counts": dict(sorted(event_counts.items())),
+            "timeline": [
+                {
+                    key: event.get(key)
+                    for key in ("timestamp", "event", "project", "resource_id", "target_id", "release_id", "rollback", "plan_hash")
+                    if key in event
+                }
+                for event in events[-200:]
+            ],
+        },
+        "model": None,
+        "api_cost": sum(float(event.get("api_cost", 0)) for event in events if isinstance(event.get("api_cost", 0), (int, float))),
+        "recommendations": ["Activer uniquement des checks inventories et approuves."] if total_checks == 0 else [],
+    }
+    now = int(time.time())
+    metrics = [
+        "# HELP ops_v1_report_timestamp_seconds Last deterministic Ops V1 report generation.",
+        "# TYPE ops_v1_report_timestamp_seconds gauge",
+        f"ops_v1_report_timestamp_seconds {now}",
+        "# HELP ops_v1_report_anomalies Number of failures represented in the latest report.",
+        "# TYPE ops_v1_report_anomalies gauge",
+        f"ops_v1_report_anomalies {failures}",
+        "# HELP ops_v1_check_results Number of check results by status.",
+        "# TYPE ops_v1_check_results gauge",
+    ]
+    for status, count in sorted(check_counts.items()):
+        metrics.append(f'ops_v1_check_results{{status="{_prom_label(status)}"}} {count}')
+    metrics.extend(
+        [
+            "# HELP ops_v1_release_events_total Number of local release workflow events.",
+            "# TYPE ops_v1_release_events_total gauge",
+        ]
+    )
+    for event_name in ("release_apply_started", "release_apply_succeeded", "release_apply_failed"):
+        metrics.append(f'ops_v1_release_events_total{{event="{event_name}"}} {event_counts[event_name]}')
+    return short, detail, "\n".join(metrics) + "\n"
+
+
+def parser() -> argparse.ArgumentParser:
+    cli = argparse.ArgumentParser(description="Deterministic local Ops V1 primitives (fail closed)")
+    commands = cli.add_subparsers(dest="command", required=True)
+
+    contracts = commands.add_parser("contracts-validate", help="validate deterministic tool contracts")
+    contracts.add_argument("--catalog", type=Path, required=True)
+
+    inventory = commands.add_parser("inventory-validate", help="validate the central operational inventory")
+    inventory.add_argument("--inventory", type=Path, required=True)
+
+    checks = commands.add_parser("check", help="run explicitly enabled read-only checks")
+    checks.add_argument("--inventory", type=Path, required=True)
+    checks.add_argument("--check-id", action="append", default=[])
+    checks.add_argument("--probe", action="store_true", help="perform enabled read-only probes")
+    checks.add_argument("--output", type=Path)
+
+    discovery = commands.add_parser("discovery-compare", help="compare inventory to a supplied observation")
+    discovery.add_argument("--inventory", type=Path, required=True)
+    discovery.add_argument("--observation", type=Path, required=True)
+    discovery.add_argument("--maximum-age-seconds", type=int, default=3600)
+    discovery.add_argument("--output", type=Path)
+
+    queue = commands.add_parser("queue-order", help="deterministically order a supplied mission queue snapshot")
+    queue.add_argument("--policy", type=Path, required=True)
+    queue.add_argument("--queue", type=Path, required=True)
+    queue.add_argument("--output", type=Path)
+
+    plan = commands.add_parser("release-plan", help="produce a class-C release plan without mutation")
+    plan.add_argument("--manifest", type=Path, required=True)
+    plan.add_argument("--targets", type=Path, required=True)
+    plan.add_argument("--output", type=Path)
+
+    apply = commands.add_parser("release-apply", help="apply an approved class-C release plan")
+    apply.add_argument("--manifest", type=Path, required=True)
+    apply.add_argument("--targets", type=Path, required=True)
+    apply.add_argument("--approval-dir", type=Path, default=Path("/run/ops-v1/approved"))
+    apply.add_argument("--execute", action="store_true")
+
+    rollback_plan = commands.add_parser("rollback-plan", help="produce an explicit class-C rollback plan")
+    rollback_plan.add_argument("--targets", type=Path, required=True)
+    rollback_plan.add_argument("--target-id", required=True)
+    rollback_plan.add_argument("--release-id", required=True)
+    rollback_plan.add_argument("--output", type=Path)
+
+    rollback_apply = commands.add_parser("rollback-apply", help="apply an approved explicit rollback")
+    rollback_apply.add_argument("--targets", type=Path, required=True)
+    rollback_apply.add_argument("--target-id", required=True)
+    rollback_apply.add_argument("--release-id", required=True)
+    rollback_apply.add_argument("--approval-dir", type=Path, default=Path("/run/ops-v1/approved"))
+    rollback_apply.add_argument("--execute", action="store_true")
+
+    diff = commands.add_parser("config-diff", help="validate and diff an allowlisted local configuration")
+    diff.add_argument("--registry", type=Path, required=True)
+    diff.add_argument("--target-id", required=True)
+    diff.add_argument("--candidate", type=Path, required=True)
+    diff.add_argument("--output", type=Path)
+
+    retention = commands.add_parser("retention-plan", help="plan local retention; never deletes")
+    retention.add_argument("--policy", type=Path, required=True)
+    retention.add_argument("--rule-id")
+    retention.add_argument("--output", type=Path)
+
+    skills = commands.add_parser("skills-validate", help="validate registered Hermes skills")
+    skills.add_argument("--registry", type=Path, required=True)
+    skills.add_argument("--skills-root", type=Path, required=True)
+    skills.add_argument("--repository-root", type=Path, required=True)
+
+    promote = commands.add_parser("skill-promote-candidate", help="produce, but do not install, a reviewed promotion candidate")
+    promote.add_argument("--registry", type=Path, required=True)
+    promote.add_argument("--skills-root", type=Path, required=True)
+    promote.add_argument("--repository-root", type=Path, required=True)
+    promote.add_argument("--skill", required=True)
+    promote.add_argument("--to", choices=["semi-automatic", "automatic"], required=True)
+    promote.add_argument("--evidence", type=Path, required=True)
+    promote.add_argument("--output", type=Path, required=True)
+
+    report = commands.add_parser("report", help="build short/detail reports and Prometheus metrics")
+    report.add_argument("--events", type=Path)
+    report.add_argument("--checks", type=Path)
+    report.add_argument("--output-dir", type=Path, required=True)
+    report.add_argument("--metrics-output", type=Path)
+
+    return cli
+
+
+def emit(payload: Any, output: Path | None = None) -> None:
+    if output is not None:
+        atomic_json(output, payload)
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        if args.command == "contracts-validate":
+            emit(validate_contract_catalog(args.catalog))
+        elif args.command == "inventory-validate":
+            validated = validate_inventory(args.inventory)
+            emit({"ok": True, "resources": len(validated["resources"]), "checks": len(validated["checks"]), "remote_management_enabled": sum(1 for item in validated["resources"] if item["connection_alias"] != "local" and item["management_enabled"])})
+        elif args.command == "check":
+            emit(execute_checks(args.inventory, check_ids=set(args.check_id) or None, probe=args.probe), args.output)
+        elif args.command == "discovery-compare":
+            if not 1 <= args.maximum_age_seconds <= 86400:
+                raise OpsError("invalid_argument", "maximum age must be between 1 and 86400 seconds")
+            emit(compare_discovery(args.inventory, args.observation, maximum_age_seconds=args.maximum_age_seconds), args.output)
+        elif args.command == "queue-order":
+            emit(order_mission_queue(args.policy, args.queue), args.output)
+        elif args.command == "release-plan":
+            with deadline(60):
+                result, _, _ = build_release_plan(args.manifest, args.targets)
+            emit(result, args.output)
+        elif args.command == "release-apply":
+            with deadline(300):
+                result = apply_release(args.manifest, args.targets, args.approval_dir, execute=args.execute)
+            emit(result)
+        elif args.command == "rollback-plan":
+            with deadline(60):
+                result, _, _ = build_rollback_plan(args.targets, args.target_id, args.release_id)
+            emit(result, args.output)
+        elif args.command == "rollback-apply":
+            with deadline(180):
+                result = apply_rollback(args.targets, args.target_id, args.release_id, args.approval_dir, execute=args.execute)
+            emit(result)
+        elif args.command == "config-diff":
+            emit(config_diff(args.registry, args.target_id, args.candidate), args.output)
+        elif args.command == "retention-plan":
+            emit(retention_plan(args.policy, rule_id=args.rule_id), args.output)
+        elif args.command == "skills-validate":
+            emit(validate_skills(args.registry, args.skills_root, args.repository_root))
+        elif args.command == "skill-promote-candidate":
+            emit(promote_skill_candidate(args.registry, args.skills_root, args.repository_root, args.skill, args.to, args.evidence, args.output))
+        elif args.command == "report":
+            short, detail, metrics = build_report(args.events, args.checks)
+            args.output_dir.mkdir(parents=True, exist_ok=True)
+            atomic_text(args.output_dir / "latest.txt", short + "\n")
+            atomic_json(args.output_dir / "latest.json", detail)
+            dated = args.output_dir / f"{utcnow().date().isoformat()}.json"
+            atomic_json(dated, detail)
+            if args.metrics_output:
+                atomic_text(args.metrics_output, metrics)
+            emit({"ok": True, "short": short, "detail": str(dated), "metrics": str(args.metrics_output) if args.metrics_output else None})
+        else:  # pragma: no cover - argparse guarantees this cannot happen
+            raise AssertionError(args.command)
+    except OpsError as exc:
+        print(json.dumps(exc.as_dict(), ensure_ascii=False, sort_keys=True), file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

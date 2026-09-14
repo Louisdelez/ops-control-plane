@@ -1,0 +1,12 @@
+[backup]
+endpoint = "https://127.0.0.1:8200"
+ca_file = "/etc/pki/ca-trust/source/anchors/openbao-local.crt"
+recipient_file = "/etc/openbao-backup/recovery.age-recipient"
+destination = "/var/backups/openbao"
+retention_count = 14
+max_snapshot_bytes = 2147483648
+timeout_seconds = 300.0
+
+[credentials]
+role_id = "openbao-backup-role-id"
+secret_id = "openbao-backup-secret-id"

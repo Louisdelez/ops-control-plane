@@ -1,0 +1,7 @@
+# Exact privileged transitions for the class-B restart runbook.
+Cmnd_Alias OPSBROKER_RESTART = \
+    /usr/local/libexec/ops-runbooks/restart-service ollama.service, \
+    /usr/local/libexec/ops-runbooks/restart-service ops-broker.service, \
+    /usr/local/libexec/ops-runbooks/restart-service hermes-gateway.service
+
+opsbroker ALL=(root) NOPASSWD: OPSBROKER_RESTART

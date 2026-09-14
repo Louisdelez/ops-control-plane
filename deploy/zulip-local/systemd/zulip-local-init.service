@@ -1,0 +1,31 @@
+[Unit]
+Description=Explicit Zulip local image pull and database initialization
+Documentation=file:/opt/ops-control-plane/deploy/zulip-local/README.md
+After=docker.service zulip-local-secrets.service zulip-local.service
+Requires=docker.service zulip-local-secrets.service
+Conflicts=zulip-local.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/opt/ops-control-plane/deploy/zulip-local
+ExecStart=/opt/ops-control-plane/deploy/zulip-local/bin/init.sh
+TimeoutStartSec=30min
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/hosts /etc/pki/ca-trust /run/lock
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service @mount
+SystemCallErrorNumber=EPERM
+LimitCORE=0

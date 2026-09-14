@@ -1,0 +1,70 @@
+#!/usr/bin/python3
+"""Require initialized, unsealed local OpenBao before starting memory services."""
+
+from __future__ import annotations
+
+import json
+import ssl
+import stat
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+
+ORIGIN = "https://127.0.0.1:8200"
+CA_FILE = Path("/etc/ops-memory/openbao-ca.crt")
+MAX_BYTES = 16_384
+
+
+class RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        return None
+
+
+def main() -> int:
+    try:
+        ca_info = CA_FILE.lstat()
+    except OSError:
+        ca_info = None
+    if (
+        ca_info is None
+        or not stat.S_ISREG(ca_info.st_mode)
+        or stat.S_ISLNK(ca_info.st_mode)
+        or ca_info.st_uid != 0
+        or ca_info.st_mode & 0o022
+    ):
+        print("ops-memory: pinned OpenBao CA is unavailable", file=sys.stderr)
+        return 1
+    try:
+        context = ssl.create_default_context(cafile=str(CA_FILE))
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            RejectRedirects(),
+            urllib.request.HTTPSHandler(context=context),
+        )
+        request = urllib.request.Request(
+            ORIGIN + "/v1/sys/health?standbyok=true&sealedcode=503&uninitcode=501",
+            headers={"Accept": "application/json", "User-Agent": "ops-memory-preflight/1"},
+            method="GET",
+        )
+        with opener.open(request, timeout=2.0) as response:
+            if response.status != 200:
+                raise RuntimeError
+            raw = response.read(MAX_BYTES + 1)
+        if len(raw) > MAX_BYTES:
+            raise RuntimeError
+        document = json.loads(raw)
+        if not isinstance(document, dict):
+            raise RuntimeError
+        if document.get("initialized") is not True or document.get("sealed") is not False:
+            raise RuntimeError
+    except (OSError, RuntimeError, ValueError, ssl.SSLError, urllib.error.URLError, json.JSONDecodeError):
+        print("ops-memory: OpenBao is not initialized and unsealed", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

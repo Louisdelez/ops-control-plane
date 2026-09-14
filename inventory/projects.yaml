@@ -1,0 +1,33 @@
+version: 1
+projects:
+  - id: minecraft
+    display_name: Minecraft Ops
+    secret_mount: kv-minecraft
+    shared_dependencies:
+      - infra-shared
+      - network-shared
+      - monitoring-shared
+      - backup-shared
+    roles:
+      - coordinator
+      - deploy
+      - monitor
+      - backup
+      - incident
+      - security
+  - id: infra-shared
+    display_name: Infrastructure partagee
+    secret_mount: kv-infra-shared
+    roles: [coordinator, compute]
+  - id: network-shared
+    display_name: Reseau et DNS partages
+    secret_mount: kv-network-shared
+    roles: [network, dns, certificates]
+  - id: monitoring-shared
+    display_name: Monitoring partage
+    secret_mount: kv-monitoring-shared
+    roles: [monitor, alert, report]
+  - id: backup-shared
+    display_name: Sauvegardes partagees
+    secret_mount: kv-backup-shared
+    roles: [backup, restore-auditor]

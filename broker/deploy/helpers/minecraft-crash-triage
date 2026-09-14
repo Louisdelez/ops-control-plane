@@ -1,0 +1,71 @@
+#!/usr/bin/python3
+"""Collect bounded systemd crash facts for one known Minecraft instance."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+
+
+INSTANCE_UNITS = {
+    "velocity": "minecraft-velocity.service",
+    "lobby": "minecraft-lobby.service",
+    "survival": "minecraft-survival.service",
+}
+PROPERTIES = (
+    "Id",
+    "LoadState",
+    "ActiveState",
+    "SubState",
+    "Result",
+    "ExecMainCode",
+    "ExecMainStatus",
+    "NRestarts",
+    "StateChangeTimestamp",
+    "ActiveEnterTimestamp",
+    "InactiveEnterTimestamp",
+)
+ENVIRONMENT = {"PATH": "/usr/sbin:/usr/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or sys.argv[1] not in INSTANCE_UNITS:
+        print('{"error":"instance_not_allowed"}')
+        return 64
+    instance = sys.argv[1]
+    unit = INSTANCE_UNITS[instance]
+    completed = subprocess.run(
+        [
+            "/usr/bin/systemctl",
+            "show",
+            "--no-pager",
+            f"--property={','.join(PROPERTIES)}",
+            unit,
+        ],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+        env=ENVIRONMENT,
+    )
+    if completed.returncode != 0:
+        print(json.dumps({"error": "systemctl_failed", "instance": instance}, sort_keys=True))
+        return 1
+    values = {}
+    for line in completed.stdout.splitlines():
+        name, separator, value = line.partition("=")
+        if separator and name in PROPERTIES:
+            values[name] = value[:512]
+    result = {"instance": instance, "properties": values, "unit": unit}
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (OSError, subprocess.SubprocessError):
+        print('{"error":"triage_collection_failed"}')
+        raise SystemExit(1) from None

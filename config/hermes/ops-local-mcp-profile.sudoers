@@ -1,0 +1,40 @@
+# MCP is a byte-clean stdio protocol, hence the narrow !use_pty exception.
+# Each argv and RunAs tuple is fixed: hermesd receives no shell and cannot
+# choose a Unix peer identity for the memory or orchestrator sockets.
+Cmnd_Alias HERMES_ORCHESTRATOR_MCP_MINECRAFT = /usr/local/libexec/ops-orchestrator-mcp-profile minecraft-ops
+Cmnd_Alias HERMES_ORCHESTRATOR_MCP_INFRA = /usr/local/libexec/ops-orchestrator-mcp-profile infra-shared
+Cmnd_Alias HERMES_ORCHESTRATOR_MCP_NETWORK = /usr/local/libexec/ops-orchestrator-mcp-profile network-shared
+Cmnd_Alias HERMES_ORCHESTRATOR_MCP_MONITORING = /usr/local/libexec/ops-orchestrator-mcp-profile monitoring-shared
+Cmnd_Alias HERMES_ORCHESTRATOR_MCP_BACKUP = /usr/local/libexec/ops-orchestrator-mcp-profile backup-shared
+Cmnd_Alias HERMES_ORCHESTRATOR_MCP_DEPLOY = /usr/local/libexec/ops-orchestrator-mcp-profile deploy-ops
+Cmnd_Alias HERMES_ORCHESTRATOR_MCP_SECURITY = /usr/local/libexec/ops-orchestrator-mcp-profile security-ops
+
+Cmnd_Alias HERMES_MEMORY_MCP_MINECRAFT = /usr/local/libexec/ops-memory-mcp-profile minecraft-ops
+Cmnd_Alias HERMES_MEMORY_MCP_INFRA = /usr/local/libexec/ops-memory-mcp-profile infra-shared
+Cmnd_Alias HERMES_MEMORY_MCP_NETWORK = /usr/local/libexec/ops-memory-mcp-profile network-shared
+Cmnd_Alias HERMES_MEMORY_MCP_MONITORING = /usr/local/libexec/ops-memory-mcp-profile monitoring-shared
+Cmnd_Alias HERMES_MEMORY_MCP_BACKUP = /usr/local/libexec/ops-memory-mcp-profile backup-shared
+Cmnd_Alias HERMES_MEMORY_MCP_DEPLOY = /usr/local/libexec/ops-memory-mcp-profile deploy-ops
+Cmnd_Alias HERMES_MEMORY_MCP_SECURITY = /usr/local/libexec/ops-memory-mcp-profile security-ops
+
+Defaults!HERMES_ORCHESTRATOR_MCP_MINECRAFT !use_pty
+Defaults!HERMES_ORCHESTRATOR_MCP_INFRA !use_pty
+Defaults!HERMES_ORCHESTRATOR_MCP_NETWORK !use_pty
+Defaults!HERMES_ORCHESTRATOR_MCP_MONITORING !use_pty
+Defaults!HERMES_ORCHESTRATOR_MCP_BACKUP !use_pty
+Defaults!HERMES_ORCHESTRATOR_MCP_DEPLOY !use_pty
+Defaults!HERMES_ORCHESTRATOR_MCP_SECURITY !use_pty
+Defaults!HERMES_MEMORY_MCP_MINECRAFT !use_pty
+Defaults!HERMES_MEMORY_MCP_INFRA !use_pty
+Defaults!HERMES_MEMORY_MCP_NETWORK !use_pty
+Defaults!HERMES_MEMORY_MCP_MONITORING !use_pty
+Defaults!HERMES_MEMORY_MCP_BACKUP !use_pty
+Defaults!HERMES_MEMORY_MCP_DEPLOY !use_pty
+Defaults!HERMES_MEMORY_MCP_SECURITY !use_pty
+
+hermesd ALL=(minecraft-ops:minecraft-ops) NOPASSWD: HERMES_ORCHESTRATOR_MCP_MINECRAFT, HERMES_MEMORY_MCP_MINECRAFT
+hermesd ALL=(infra-network:infra-network) NOPASSWD: HERMES_ORCHESTRATOR_MCP_INFRA, HERMES_ORCHESTRATOR_MCP_NETWORK, HERMES_MEMORY_MCP_INFRA, HERMES_MEMORY_MCP_NETWORK
+hermesd ALL=(ops-monitor:ops-monitor) NOPASSWD: HERMES_ORCHESTRATOR_MCP_MONITORING, HERMES_MEMORY_MCP_MONITORING
+hermesd ALL=(backup-agent:backup-agent) NOPASSWD: HERMES_ORCHESTRATOR_MCP_BACKUP, HERMES_MEMORY_MCP_BACKUP
+hermesd ALL=(deploy-agent:deploy-agent) NOPASSWD: HERMES_ORCHESTRATOR_MCP_DEPLOY, HERMES_MEMORY_MCP_DEPLOY
+hermesd ALL=(security-audit:security-audit) NOPASSWD: HERMES_ORCHESTRATOR_MCP_SECURITY, HERMES_MEMORY_MCP_SECURITY

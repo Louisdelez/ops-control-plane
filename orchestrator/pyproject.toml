@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools==83.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+authors = [{ name = "LOUIS DELEZ" }]
+name = "ops-orchestrator"
+version = "0.2.0"
+description = "Fail-closed API-first model router for the Dell operations control plane"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp==2.1.1"]
+dev = ["pytest==9.1.1"]
+
+[project.scripts]
+ops-orchestrator = "ops_orchestrator.cli:main"
+ops-orchestratord = "ops_orchestrator.api:main"
+ops-orchestrator-mcp = "ops_orchestrator.mcp_server:main"
+ops-orchestrator-hermes-facade = "ops_orchestrator.hermes_facade:main"
+ops-orchestrator-provider-financed = "ops_orchestrator.provider_finance_api:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+pythonpath = ["src"]
+testpaths = ["tests"]

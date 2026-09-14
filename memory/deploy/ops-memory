@@ -1,0 +1,4 @@
+#!/usr/bin/bash
+set -Eeuo pipefail
+export PYTHONPATH=/opt/ops-memory/src
+exec /usr/bin/python3 -m ops_memory.cli "$@"

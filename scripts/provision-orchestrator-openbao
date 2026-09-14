@@ -1,0 +1,831 @@
+#!/usr/bin/python3
+"""Provision the isolated ops-orchestrator OpenBao AppRole and runtime secrets.
+
+Secrets are collected without terminal echo, sent only in TLS request bodies,
+and never passed in argv or written to plaintext files.  The only persistent
+local material is the host+TPM2-encrypted RoleID and SecretID pair.  The
+one-shot bootstrap mode accepts a human password only over an inherited
+anonymous pipe, creates the two local gateway tokens, and deliberately creates
+no provider credential object.
+"""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import hmac
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import ssl
+import stat
+import subprocess
+import sys
+import tempfile
+from types import MappingProxyType
+from typing import Any, Mapping
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+BAO_ORIGIN = "https://127.0.0.1:8200"
+BAO_CA = Path("/etc/openbao.d/tls/ca.crt")
+POLICY_FILE = Path(
+    "/usr/local/share/ops-control-plane/openbao/policies/ops-orchestrator-runtime.hcl"
+)
+POLICY_NAME = "ops-orchestrator-runtime"
+ROLE_NAME = "ops-orchestrator-runtime"
+QWEN_KV_PATH = "/v1/kv-infra-shared/data/llm/qwen"
+DEEPSEEK_KV_PATH = "/v1/kv-infra-shared/data/llm/deepseek"
+PROVIDER_KV_PATHS = MappingProxyType(
+    {
+        "alibaba": QWEN_KV_PATH,
+        "z-ai": "/v1/kv-infra-shared/data/llm/providers/z-ai",
+        "mistral-ai": "/v1/kv-infra-shared/data/llm/providers/mistral-ai",
+        "deepseek": DEEPSEEK_KV_PATH,
+        "minimax": "/v1/kv-infra-shared/data/llm/providers/minimax",
+        "google": "/v1/kv-infra-shared/data/llm/providers/google",
+        "cohere": "/v1/kv-infra-shared/data/llm/providers/cohere",
+        "moonshot": "/v1/kv-infra-shared/data/llm/providers/moonshot",
+        "tencent": "/v1/kv-infra-shared/data/llm/providers/tencent",
+        "xai": "/v1/kv-infra-shared/data/llm/providers/xai",
+        "openai": "/v1/kv-infra-shared/data/llm/providers/openai",
+        "bytedance": "/v1/kv-infra-shared/data/llm/providers/bytedance",
+        "anthropic": "/v1/kv-infra-shared/data/llm/providers/anthropic",
+        "nvidia": "/v1/kv-infra-shared/data/llm/providers/nvidia",
+        "aws": "/v1/kv-infra-shared/data/llm/providers/aws",
+        "meta": "/v1/kv-infra-shared/data/llm/providers/meta",
+        "microsoft": "/v1/kv-infra-shared/data/llm/providers/microsoft",
+        "xiaomi": "/v1/kv-infra-shared/data/llm/providers/xiaomi",
+        "baidu": "/v1/kv-infra-shared/data/llm/providers/baidu",
+        "baichuan": "/v1/kv-infra-shared/data/llm/providers/baichuan",
+        "stepfun": "/v1/kv-infra-shared/data/llm/providers/stepfun",
+    }
+)
+HERMES_GATEWAY_KV_PATH = "/v1/kv-infra-shared/data/hermes/gateway"
+SERVICES = (
+    "hermes-gateway.service",
+    "ops-orchestrator-hermes-facade.service",
+    "ops-orchestrator.service",
+    "ops-orchestrator-provider-finance-daemon.service",
+    "ops-orchestrator-secrets.service",
+)
+CREDSTORE = Path("/etc/credstore.encrypted")
+CREDENTIAL_NAMES = (
+    "ops-orchestrator-openbao-role-id",
+    "ops-orchestrator-openbao-secret-id",
+)
+MAX_RESPONSE_BYTES = 32 * 1024
+MAX_POLICY_BYTES = 16 * 1024
+MAX_CREDENTIAL_BYTES = 768
+HTTP_TIMEOUT_SECONDS = 3.0
+MAX_PASSWORD_BYTES = 1024
+
+_IDENTIFIER_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{15,127}\Z")
+_TOKEN_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._~-]{15,511}\Z")
+_SECRET_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._~+/=-]{15,511}\Z")
+
+
+class ProvisioningError(RuntimeError):
+    pass
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Provision the isolated orchestrator OpenBao identity."
+    )
+    parser.add_argument(
+        "--bootstrap-empty",
+        action="store_true",
+        help=(
+            "create a zero-provider-key runtime for the reviewed one-shot local "
+            "bootstrap"
+        ),
+    )
+    parser.add_argument(
+        "--password-fd",
+        type=int,
+        help="inherited anonymous pipe containing the OpenBao password",
+    )
+    arguments = parser.parse_args(argv)
+    if arguments.bootstrap_empty != (arguments.password_fd is not None):
+        parser.error("--bootstrap-empty and --password-fd must be used together")
+    if arguments.password_fd is not None and arguments.password_fd < 3:
+        parser.error("--password-fd must identify an inherited descriptor")
+    return arguments
+
+
+def _password_from_pipe(descriptor: int) -> str:
+    """Read one password from an inherited anonymous pipe, never a disk file."""
+
+    try:
+        info = os.fstat(descriptor)
+        descriptor_target = os.readlink(f"/proc/self/fd/{descriptor}")
+        if not stat.S_ISFIFO(info.st_mode) or not re.fullmatch(
+            r"pipe:\[\d+\]", descriptor_target
+        ):
+            raise ProvisioningError("The bootstrap password descriptor is not a pipe.")
+        raw = os.read(descriptor, MAX_PASSWORD_BYTES + 1)
+        if len(raw) > MAX_PASSWORD_BYTES or os.read(descriptor, 1):
+            raise ProvisioningError("The bootstrap password exceeds its bound.")
+    except OSError as exc:
+        raise ProvisioningError("The bootstrap password pipe is unavailable.") from exc
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+    raw = raw[:-2] if raw.endswith(b"\r\n") else raw[:-1] if raw.endswith(b"\n") else raw
+    try:
+        password = raw.decode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise ProvisioningError("The bootstrap password has an invalid encoding.") from exc
+    if not password or "\x00" in password:
+        raise ProvisioningError("An OpenBao password is required.")
+    return password
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(  # type: ignore[override]
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        raise ProvisioningError("OpenBao redirected a local request.")
+
+
+def _validated(value: Any, pattern: re.Pattern[str], description: str) -> str:
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        raise ProvisioningError(f"An invalid {description} was received.")
+    return value
+
+
+def _require_distinct_secrets(values: dict[str, str]) -> None:
+    """Reject credential reuse across trust domains without exposing values."""
+
+    items = list(values.items())
+    for index, (left_name, left_value) in enumerate(items):
+        for right_name, right_value in items[index + 1 :]:
+            if hmac.compare_digest(left_value, right_value):
+                raise ProvisioningError(
+                    f"The {left_name} and {right_name} credentials must be distinct."
+                )
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    context = ssl.create_default_context(cafile=str(BAO_CA))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+        urllib.request.HTTPSHandler(context=context),
+    )
+
+
+def _request(
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    token: str | None = None,
+    expect_json: bool = True,
+    allow_not_found: bool = False,
+) -> dict[str, Any] | None:
+    exact_paths = {
+        "/v1/auth/userpass/login/ops-user",
+        f"/v1/sys/policies/acl/{POLICY_NAME}",
+        f"/v1/auth/approle/role/{ROLE_NAME}",
+        f"/v1/auth/approle/role/{ROLE_NAME}/role-id",
+        f"/v1/auth/approle/role/{ROLE_NAME}/secret-id",
+        f"/v1/auth/approle/role/{ROLE_NAME}/secret-id-accessor/destroy",
+        "/v1/auth/approle/login",
+        HERMES_GATEWAY_KV_PATH,
+        "/v1/auth/token/revoke-self",
+    }
+    exact_paths.update(PROVIDER_KV_PATHS.values())
+    if method not in {"GET", "POST"} or path not in exact_paths:
+        raise ProvisioningError("An internal OpenBao request was rejected.")
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "provision-orchestrator-openbao/1",
+    }
+    body = None
+    if payload is not None or method == "POST":
+        body = json.dumps(payload or {}, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if token is not None:
+        headers["X-Vault-Token"] = _validated(token, _TOKEN_RE, "token")
+    request = urllib.request.Request(
+        BAO_ORIGIN + path, data=body, headers=headers, method=method
+    )
+    try:
+        with _opener().open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            allowed = {200} if expect_json else {200, 204}
+            if response.status not in allowed:
+                raise ProvisioningError("OpenBao rejected the operation.")
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        if allow_not_found and exc.code == 404:
+            return None
+        raise ProvisioningError("OpenBao rejected the operation.") from exc
+    except (OSError, ssl.SSLError, urllib.error.URLError) as exc:
+        raise ProvisioningError("The local OpenBao request failed.") from exc
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ProvisioningError("OpenBao returned an oversized response.")
+    if not expect_json:
+        return None
+    try:
+        result = json.loads(raw)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ProvisioningError("OpenBao returned invalid JSON.") from exc
+    if not isinstance(result, dict):
+        raise ProvisioningError("OpenBao returned an invalid document.")
+    return result
+
+
+def _data(document: dict[str, Any]) -> dict[str, Any]:
+    value = document.get("data")
+    if not isinstance(value, dict):
+        raise ProvisioningError("OpenBao response data is missing.")
+    return value
+
+
+def _secret_data(document: dict[str, Any]) -> dict[str, Any]:
+    value = _data(document).get("data")
+    if not isinstance(value, dict):
+        raise ProvisioningError("An OpenBao KV object is invalid.")
+    return value
+
+
+def _validate_root_regular(path: Path, description: str, *, private: bool) -> None:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise ProvisioningError(f"The {description} is unavailable.") from exc
+    forbidden = 0o077 if private else 0o022
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != 0
+        or stat.S_IMODE(info.st_mode) & forbidden
+    ):
+        raise ProvisioningError(f"The {description} has unsafe ownership or mode.")
+
+
+def _read_policy() -> str:
+    _validate_root_regular(POLICY_FILE, "installed orchestrator policy", private=False)
+    descriptor = os.open(POLICY_FILE, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        raw = os.read(descriptor, MAX_POLICY_BYTES + 1)
+        if len(raw) > MAX_POLICY_BYTES or os.read(descriptor, 1):
+            raise ProvisioningError("The installed orchestrator policy is oversized.")
+    finally:
+        os.close(descriptor)
+    try:
+        policy = raw.decode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise ProvisioningError("The installed orchestrator policy is invalid.") from exc
+    required = {
+        *(
+            f'path "{path.removeprefix("/v1/")}"'
+            for path in PROVIDER_KV_PATHS.values()
+        ),
+        f'path "{HERMES_GATEWAY_KV_PATH.removeprefix("/v1/")}"',
+        'path "auth/token/revoke-self"',
+    }
+    if not all(fragment in policy for fragment in required):
+        raise ProvisioningError("The installed orchestrator policy is incomplete.")
+    if policy.count('capabilities = ["read"]') != 22:
+        raise ProvisioningError("The installed orchestrator policy has an unsafe read scope.")
+    if policy.count('capabilities = ["update"]') != 1:
+        raise ProvisioningError("The installed orchestrator policy has an unsafe write scope.")
+    return policy
+
+
+def _configure_runtime(human_token: str, policy: str) -> None:
+    _request(
+        "POST",
+        f"/v1/sys/policies/acl/{POLICY_NAME}",
+        payload={"policy": policy},
+        token=human_token,
+        expect_json=False,
+    )
+    _request(
+        "POST",
+        f"/v1/auth/approle/role/{ROLE_NAME}",
+        payload={
+            "token_policies": [POLICY_NAME],
+            "bind_secret_id": True,
+            "secret_id_bound_cidrs": ["127.0.0.1/32"],
+            "token_bound_cidrs": ["127.0.0.1/32"],
+            "secret_id_num_uses": 1024,
+            "secret_id_ttl": "720h",
+            "token_ttl": "60s",
+            "token_max_ttl": "120s",
+            "token_explicit_max_ttl": "120s",
+            "token_num_uses": 23,
+            "token_no_default_policy": True,
+            "token_type": "service",
+        },
+        token=human_token,
+        expect_json=False,
+    )
+
+
+def _validate_role(document: dict[str, Any]) -> None:
+    role = _data(document)
+    policies = role.get("token_policies")
+    if not isinstance(policies, list) or set(policies) != {POLICY_NAME}:
+        raise ProvisioningError("The orchestrator AppRole policies are not exact.")
+    exact = {
+        "bind_secret_id": True,
+        "token_no_default_policy": True,
+        "secret_id_num_uses": 1024,
+        "token_num_uses": 23,
+        "token_period": 0,
+        "token_type": "service",
+        "secret_id_ttl": 2_592_000,
+        "token_ttl": 60,
+        "token_max_ttl": 120,
+        "token_explicit_max_ttl": 120,
+    }
+    for field, expected in exact.items():
+        value = role.get(field)
+        if isinstance(value, bool) and not isinstance(expected, bool):
+            raise ProvisioningError(f"The orchestrator AppRole field {field} is invalid.")
+        if value != expected:
+            raise ProvisioningError(f"The orchestrator AppRole field {field} is unsafe.")
+    for field in ("secret_id_bound_cidrs", "token_bound_cidrs"):
+        if role.get(field) not in (["127.0.0.1/32"], ["127.0.0.1"]):
+            raise ProvisioningError(f"The orchestrator AppRole field {field} is unsafe.")
+
+
+def _prepare_credstore() -> None:
+    CREDSTORE.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = CREDSTORE.lstat()
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != 0
+        or stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        raise ProvisioningError("The encrypted credential store is unsafe.")
+    os.chmod(CREDSTORE, 0o700)
+
+
+def _encrypt(name: str, value: str, output: Path) -> None:
+    completed = subprocess.run(
+        [
+            "/usr/bin/systemd-creds",
+            "encrypt",
+            "--with-key=host+tpm2",
+            f"--name={name}",
+            "-",
+            str(output),
+        ],
+        check=False,
+        input=(value + "\n").encode("ascii"),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0:
+        raise ProvisioningError("systemd-creds could not encrypt an AppRole credential.")
+    _validate_root_regular(output, "new encrypted AppRole credential", private=False)
+    os.chmod(output, 0o600)
+    _validate_root_regular(output, "new encrypted AppRole credential", private=True)
+
+
+def _decrypt(name: str, path: Path) -> str:
+    _validate_root_regular(path, "encrypted AppRole credential", private=True)
+    completed = subprocess.run(
+        ["/usr/bin/systemd-creds", "decrypt", f"--name={name}", str(path), "-"],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0 or len(completed.stdout) > MAX_CREDENTIAL_BYTES:
+        raise ProvisioningError("An encrypted AppRole credential failed verification.")
+    try:
+        return completed.stdout.rstrip(b"\r\n").decode("ascii", errors="strict")
+    except UnicodeError as exc:
+        raise ProvisioningError("An encrypted AppRole credential is invalid.") from exc
+
+
+def _service_is_active(service: str) -> bool:
+    completed = subprocess.run(
+        ["/usr/bin/systemctl", "is-active", "--quiet", service],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return completed.returncode == 0
+
+
+def _test_runtime(
+    role_id: str,
+    secret_id: str,
+    expected_provider_keys: Mapping[str, str],
+    expected_facade_token: str,
+) -> None:
+    runtime_token: str | None = None
+    error: BaseException | None = None
+    revoke_error: BaseException | None = None
+    try:
+        login = _request(
+            "POST",
+            "/v1/auth/approle/login",
+            payload={"role_id": role_id, "secret_id": secret_id},
+        )
+        auth = login.get("auth") if isinstance(login, dict) else None
+        if not isinstance(auth, dict):
+            raise ProvisioningError("The issued orchestrator AppRole login failed.")
+        runtime_token = _validated(auth.get("client_token"), _TOKEN_RE, "token")
+        provider_documents = {
+            account_id: _request(
+                "GET",
+                path,
+                token=runtime_token,
+                allow_not_found=True,
+            )
+            for account_id, path in PROVIDER_KV_PATHS.items()
+        }
+        gateway = _request("GET", HERMES_GATEWAY_KV_PATH, token=runtime_token)
+        if not isinstance(gateway, dict):
+            raise ProvisioningError("The issued AppRole cannot read its exact secrets.")
+        observed_provider_keys: dict[str, str] = {}
+        for account_id, document in provider_documents.items():
+            if document is None:
+                continue
+            values = _secret_data(document)
+            if "api_key" not in values or not set(values) <= {"api_key", "finance_api_key"}:
+                raise ProvisioningError(
+                    f"The {account_id} provider KV object is invalid."
+                )
+            observed_provider_keys[account_id] = _validated(
+                values.get("api_key"), _SECRET_RE, f"{account_id} API key"
+            )
+        if set(expected_provider_keys) - set(PROVIDER_KV_PATHS):
+            raise ProvisioningError("The expected provider credential set is invalid.")
+        if set(observed_provider_keys) != set(expected_provider_keys):
+            observed_provider_keys.clear()
+            raise ProvisioningError(
+                "The AppRole returned an unexpected provider credential set."
+            )
+        for account_id, expected_key in expected_provider_keys.items():
+            observed_key = observed_provider_keys.get(account_id)
+            if observed_key is None or not hmac.compare_digest(
+                observed_key, expected_key
+            ):
+                raise ProvisioningError("The AppRole returned an unexpected secret.")
+        gateway_values = _secret_data(gateway)
+        if set(gateway_values) != {"api_server_key", "orchestrator_api_key"}:
+            raise ProvisioningError("The Hermes gateway KV object is invalid.")
+        _validated(
+            gateway_values.get("api_server_key"),
+            _SECRET_RE,
+            "Hermes API server key",
+        )
+        observed_facade_token = _validated(
+            gateway_values.get("orchestrator_api_key"),
+            _SECRET_RE,
+            "Hermes facade token",
+        )
+        if not hmac.compare_digest(observed_facade_token, expected_facade_token):
+            raise ProvisioningError("The AppRole returned an unexpected secret.")
+        observed_facade_token = ""
+        observed_provider_keys.clear()
+    except BaseException as exc:
+        error = exc
+    finally:
+        if runtime_token is not None:
+            try:
+                _request(
+                    "POST",
+                    "/v1/auth/token/revoke-self",
+                    token=runtime_token,
+                    expect_json=False,
+                )
+            except BaseException as exc:
+                revoke_error = exc
+            runtime_token = None
+    if error is not None or revoke_error is not None:
+        raise ProvisioningError("The AppRole failed its 22-read/revoke test.")
+
+
+def _assert_provider_namespace_empty(human_token: str) -> None:
+    """Prove that zero-key bootstrap will not inherit a provider credential."""
+
+    for path in PROVIDER_KV_PATHS.values():
+        document = _request(
+            "GET", path, token=human_token, allow_not_found=True
+        )
+        if document is not None:
+            document.clear()
+            raise ProvisioningError(
+                "Zero-key bootstrap requires an empty provider credential namespace."
+            )
+
+
+def _destroy_accessor(human_token: str, accessor: str) -> None:
+    _request(
+        "POST",
+        f"/v1/auth/approle/role/{ROLE_NAME}/secret-id-accessor/destroy",
+        payload={
+            "secret_id_accessor": _validated(
+                accessor, _IDENTIFIER_RE, "SecretID accessor"
+            )
+        },
+        token=human_token,
+        expect_json=False,
+    )
+
+
+def provision(
+    *, bootstrap_empty: bool = False, password_fd: int | None = None
+) -> None:
+    if os.geteuid() != 0:
+        raise ProvisioningError("Run this provisioner as root.")
+    os.umask(0o077)
+    if any(_service_is_active(service) for service in SERVICES):
+        raise ProvisioningError("Stop the orchestrator and its secret resolver first.")
+    _validate_root_regular(BAO_CA, "pinned local OpenBao CA", private=False)
+    policy = _read_policy()
+    _prepare_credstore()
+    credential_paths = tuple(CREDSTORE / name for name in CREDENTIAL_NAMES)
+    if any(os.path.lexists(path) for path in credential_paths):
+        raise ProvisioningError(
+            "Encrypted orchestrator AppRole credentials already exist; rotate them separately."
+        )
+
+    if bootstrap_empty:
+        if password_fd is None:
+            raise ProvisioningError("The bootstrap password pipe is required.")
+        password = _password_from_pipe(password_fd)
+        qwen_key = ""
+        deepseek_key = ""
+        facade_token = "A" + secrets.token_urlsafe(48)
+        api_server_key = "A" + secrets.token_urlsafe(48)
+    else:
+        if password_fd is not None:
+            raise ProvisioningError("A password descriptor is only valid for bootstrap.")
+        confirmation = input(
+            "This provisions the isolated orchestrator AppRole. "
+            "Type PROVISION-ORCHESTRATOR to continue: "
+        )
+        if confirmation != "PROVISION-ORCHESTRATOR":
+            raise ProvisioningError("Provisioning cancelled.")
+        password = getpass.getpass("OpenBao password for ops-user (never stored): ")
+        qwen_key = getpass.getpass("Qwen API key (never stored locally): ")
+        deepseek_key = getpass.getpass("DeepSeek API key (never stored locally): ")
+        facade_token = getpass.getpass("Hermes facade token (never stored locally): ")
+        api_server_key = "A" + secrets.token_urlsafe(48)
+    if not password:
+        raise ProvisioningError("An OpenBao password is required.")
+    if not bootstrap_empty:
+        qwen_key = _validated(qwen_key, _SECRET_RE, "Qwen API key")
+        deepseek_key = _validated(deepseek_key, _SECRET_RE, "DeepSeek API key")
+    facade_token = _validated(facade_token, _SECRET_RE, "Hermes facade token")
+    api_server_key = _validated(
+        api_server_key, _SECRET_RE, "Hermes API server key"
+    )
+    if bootstrap_empty:
+        _require_distinct_secrets(
+            {
+                "Hermes facade": facade_token,
+                "Hermes API server": api_server_key,
+            }
+        )
+    else:
+        _require_distinct_secrets(
+            {
+                "Qwen API": qwen_key,
+                "DeepSeek API": deepseek_key,
+                "Hermes facade": facade_token,
+            }
+        )
+
+    human_token: str | None = None
+    new_accessor: str | None = None
+    staging: Path | None = None
+    installed: list[Path] = []
+    operation_error: BaseException | None = None
+    revocation_error: BaseException | None = None
+    try:
+        username = urllib.parse.quote("ops-user", safe="")
+        login = _request(
+            "POST", f"/v1/auth/userpass/login/{username}", payload={"password": password}
+        )
+        password = ""
+        auth = login.get("auth") if isinstance(login, dict) else None
+        if not isinstance(auth, dict):
+            raise ProvisioningError("The human OpenBao login failed.")
+        human_token = _validated(auth.get("client_token"), _TOKEN_RE, "token")
+
+        if bootstrap_empty:
+            _assert_provider_namespace_empty(human_token)
+
+        _configure_runtime(human_token, policy)
+        role_document = _request(
+            "GET", f"/v1/auth/approle/role/{ROLE_NAME}", token=human_token
+        )
+        if not isinstance(role_document, dict):
+            raise ProvisioningError("The orchestrator AppRole is unavailable.")
+        _validate_role(role_document)
+
+        gateway_document = _request(
+            "GET", HERMES_GATEWAY_KV_PATH, token=human_token, allow_not_found=True
+        )
+        gateway_values: dict[str, str] = {}
+        if gateway_document is not None:
+            existing_gateway = _secret_data(gateway_document)
+            if "api_server_key" in existing_gateway:
+                gateway_values["api_server_key"] = _validated(
+                    existing_gateway.get("api_server_key"),
+                    _SECRET_RE,
+                    "Hermes API server key",
+                )
+            if "orchestrator_api_key" in existing_gateway and bootstrap_empty:
+                gateway_values["orchestrator_api_key"] = _validated(
+                    existing_gateway.get("orchestrator_api_key"),
+                    _SECRET_RE,
+                    "Hermes facade token",
+                )
+            if set(existing_gateway) - {"api_server_key", "orchestrator_api_key"}:
+                raise ProvisioningError("The Hermes gateway KV object has unknown fields.")
+            gateway_document.clear()
+        gateway_values.setdefault("api_server_key", api_server_key)
+        if bootstrap_empty:
+            gateway_values.setdefault("orchestrator_api_key", facade_token)
+            facade_token = gateway_values["orchestrator_api_key"]
+            api_server_key = gateway_values["api_server_key"]
+            _require_distinct_secrets(
+                {
+                    "Hermes facade": facade_token,
+                    "Hermes API server": api_server_key,
+                }
+            )
+        else:
+            gateway_values["orchestrator_api_key"] = facade_token
+            _require_distinct_secrets(
+                {
+                    "Qwen API": qwen_key,
+                    "DeepSeek API": deepseek_key,
+                    "Hermes facade": facade_token,
+                    **(
+                        {"Hermes API server": gateway_values["api_server_key"]}
+                        if "api_server_key" in gateway_values
+                        else {}
+                    ),
+                }
+            )
+
+        if not bootstrap_empty:
+            _request(
+                "POST",
+                QWEN_KV_PATH,
+                payload={"data": {"api_key": qwen_key}},
+                token=human_token,
+                expect_json=False,
+            )
+            _request(
+                "POST",
+                DEEPSEEK_KV_PATH,
+                payload={"data": {"api_key": deepseek_key}},
+                token=human_token,
+                expect_json=False,
+            )
+        _request(
+            "POST",
+            HERMES_GATEWAY_KV_PATH,
+            payload={"data": gateway_values},
+            token=human_token,
+            expect_json=False,
+        )
+        gateway_values.clear()
+
+        role_id_document = _request(
+            "GET", f"/v1/auth/approle/role/{ROLE_NAME}/role-id", token=human_token
+        )
+        secret_document = _request(
+            "POST", f"/v1/auth/approle/role/{ROLE_NAME}/secret-id", token=human_token
+        )
+        if not isinstance(role_id_document, dict) or not isinstance(secret_document, dict):
+            raise ProvisioningError("OpenBao did not issue orchestrator AppRole credentials.")
+        role_id = _validated(
+            _data(role_id_document).get("role_id"), _IDENTIFIER_RE, "RoleID"
+        )
+        secret_values = _data(secret_document)
+        secret_id = _validated(
+            secret_values.get("secret_id"), _IDENTIFIER_RE, "SecretID"
+        )
+        new_accessor = _validated(
+            secret_values.get("secret_id_accessor"),
+            _IDENTIFIER_RE,
+            "SecretID accessor",
+        )
+        if secret_values.get("secret_id_ttl") != 2_592_000:
+            raise ProvisioningError("OpenBao returned an unsafe SecretID TTL.")
+        expected_provider_keys = (
+            {} if bootstrap_empty else {"alibaba": qwen_key, "deepseek": deepseek_key}
+        )
+        _test_runtime(role_id, secret_id, expected_provider_keys, facade_token)
+        expected_provider_keys.clear()
+        qwen_key = deepseek_key = facade_token = api_server_key = ""
+
+        staging = Path(tempfile.mkdtemp(prefix=".ops-orchestrator-openbao-", dir=CREDSTORE))
+        os.chmod(staging, 0o700)
+        for name, value in zip(CREDENTIAL_NAMES, (role_id, secret_id), strict=True):
+            _encrypt(name, value, staging / name)
+            observed = _decrypt(name, staging / name)
+            if not hmac.compare_digest(observed, value):
+                raise ProvisioningError("An encrypted AppRole credential changed value.")
+            observed = ""
+        role_id = secret_id = ""
+        for name, destination in zip(CREDENTIAL_NAMES, credential_paths, strict=True):
+            os.replace(staging / name, destination)
+            installed.append(destination)
+        staging.rmdir()
+        staging = None
+        directory_fd = os.open(CREDSTORE, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except BaseException as exc:
+        operation_error = exc
+    finally:
+        password = qwen_key = deepseek_key = facade_token = api_server_key = ""
+        if human_token is not None:
+            if operation_error is not None and new_accessor is not None:
+                try:
+                    _destroy_accessor(human_token, new_accessor)
+                    new_accessor = None
+                except BaseException:
+                    pass
+            try:
+                _request(
+                    "POST",
+                    "/v1/auth/token/revoke-self",
+                    token=human_token,
+                    expect_json=False,
+                )
+            except BaseException as exc:
+                revocation_error = exc
+                if new_accessor is not None:
+                    try:
+                        _destroy_accessor(human_token, new_accessor)
+                        new_accessor = None
+                    except BaseException:
+                        pass
+            human_token = None
+        if operation_error is not None or revocation_error is not None:
+            for path in installed:
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+            if staging is not None and staging.parent == CREDSTORE:
+                for name in CREDENTIAL_NAMES:
+                    child = staging / name
+                    try:
+                        child.unlink()
+                    except FileNotFoundError:
+                        pass
+                try:
+                    staging.rmdir()
+                except FileNotFoundError:
+                    pass
+
+    if revocation_error is not None:
+        raise ProvisioningError("The human OpenBao token revocation was not confirmed.")
+    if isinstance(operation_error, ProvisioningError):
+        raise operation_error
+    if operation_error is not None:
+        raise ProvisioningError("Orchestrator OpenBao provisioning failed.") from operation_error
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        arguments = _parse_args(argv)
+        provision(
+            bootstrap_empty=arguments.bootstrap_empty,
+            password_fd=arguments.password_fd,
+        )
+    except (OSError, ProvisioningError, ValueError) as exc:
+        print(f"provision-orchestrator-openbao: {exc}", file=sys.stderr)
+        return 1
+    print("Orchestrator OpenBao AppRole provisioned; no plaintext secret was persisted.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

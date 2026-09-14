@@ -1,0 +1,23 @@
+version: 1
+
+# Exact absolute paths only.  Shells and /usr/bin/env are rejected by the
+# registry even if somebody adds them here by mistake.
+executables:
+  - /usr/local/libexec/ops-runbooks/local-health
+  - /usr/local/libexec/ops-runbooks/service-status
+  - /usr/local/libexec/ops-runbooks/minecraft-crash-triage
+
+sudo:
+  executable: /usr/bin/sudo
+  required_prefix: [-n]
+  allowed_helpers:
+    - /usr/local/libexec/ops-runbooks/restart-service
+    - /usr/local/libexec/ops-runbooks/nvidia-package-remediation
+    - /usr/local/libexec/ops-runbooks/control-plane-deployment
+    - /usr/local/libexec/ops-runbooks/remote-preflight
+    - /usr/local/libexec/ops-runbooks/remote-services
+    - /usr/local/libexec/ops-runbooks/public-zulip-preflight
+    - /usr/local/libexec/ops-runbooks/publish-zulip
+    - /usr/local/libexec/ops-runbooks/recovery-seed-copy
+    - /usr/local/libexec/ops-runbooks/periodic-recovery-enable
+    - /usr/local/libexec/ops-runbooks/locate-prod

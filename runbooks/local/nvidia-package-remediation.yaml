@@ -1,0 +1,19 @@
+id: local.nvidia-package-remediation.v1
+version: 1
+project: infra-shared
+action_class: C
+description: Garantir la branche NVIDIA 580xx sur le Dell Fedora 44 explicitement autorise
+timeout_seconds: 25
+command:
+  argv:
+    - /usr/bin/sudo
+    - -n
+    - /usr/local/libexec/ops-runbooks/nvidia-package-remediation
+    - "{operation}"
+parameters:
+  operation:
+    type: enum
+    values: [ensure-580xx]
+output:
+  max_bytes: 8192
+  redact: true

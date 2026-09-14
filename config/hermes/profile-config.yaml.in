@@ -1,0 +1,30 @@
+# Fail-closed reference for a new profile. Copy it, then add all three fixed
+# stdio identities only after broker RBAC, memory peer policy, orchestrator
+# project scope and exact sudo RunAs rules exist. Never put a secret or bearer
+# token in this file.
+_config_version: 39
+model:
+  provider: custom:ops-orchestrator-hermes
+  default: qwen-coordinator
+  context_length: 64000
+  api_mode: chat_completions
+providers:
+  ops-orchestrator-hermes:
+    api: http://127.0.0.1:8643/v1
+    key_env: HERMES_FACADE_TOKEN
+    transport: chat_completions
+    default_model: qwen-coordinator
+    discover_models: false
+    models:
+      qwen-coordinator: {context_length: 64000}
+agent:
+  reasoning_effort: none
+  disabled_toolsets: [terminal, file, code_execution, delegation, browser, computer_use, cronjob, web, kanban]
+plugins:
+  enabled: []
+skills: {external_dirs: [], project_discovery: false, inline_shell: false, guard_agent_created: true, write_approval: true}
+curator: {enabled: false}
+mcp_servers: {}
+platform_toolsets: {api_server: [clarify, skills], cli: [clarify, skills]}
+platforms:
+  api_server: {enabled: false}

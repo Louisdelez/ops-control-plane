@@ -1,0 +1,109 @@
+[Unit]
+Description=Fail-closed API-first Ops model orchestrator
+Documentation=file:/usr/share/doc/ops-orchestrator/orchestrator-v1.md
+After=network-online.target openbao-unseal.service ops-orchestrator-secrets.service ops-orchestrator-provider-finance-daemon.service
+Requires=ops-orchestrator-secrets.service ops-orchestrator-provider-finance-daemon.service
+Wants=network-online.target
+ConditionPathExists=/etc/credstore.encrypted/ops-orchestrator-openbao-role-id
+ConditionPathExists=/etc/credstore.encrypted/ops-orchestrator-openbao-secret-id
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=opsorchestrator
+# RuntimeDirectory inherits the service's primary group.  Make the API group
+# primary so authorized clients can traverse /run/ops-orchestrator; retain the
+# private account group solely for reading root-managed configuration.
+Group=opsorchestrator-api
+# opsfinance grants traversal/write access to the finance socket only. The
+# dedicated worker's systemd credential directory remains UID-isolated.
+SupplementaryGroups=opsorchestrator opsfinance
+ExecStart=/opt/ops-orchestrator/venv/bin/ops-orchestratord --config /etc/ops-orchestrator/config.json
+EnvironmentFile=-/etc/ops-orchestrator/orchestrator.env
+# Provider credentials are optional at service start.  A present root-resolved
+# credential wins; the public newline fallback makes an absent provider
+# unavailable without preventing the local control plane from becoming healthy.
+LoadCredential=qwen-api-key:/run/ops-orchestrator-secrets/current/qwen-api-key
+SetCredential=qwen-api-key:\n
+LoadCredential=deepseek-api-key:/run/ops-orchestrator-secrets/current/deepseek-api-key
+SetCredential=deepseek-api-key:\n
+LoadCredential=z-ai-api-key:/run/ops-orchestrator-secrets/current/z-ai-api-key
+SetCredential=z-ai-api-key:\n
+LoadCredential=mistral-ai-api-key:/run/ops-orchestrator-secrets/current/mistral-ai-api-key
+SetCredential=mistral-ai-api-key:\n
+LoadCredential=minimax-api-key:/run/ops-orchestrator-secrets/current/minimax-api-key
+SetCredential=minimax-api-key:\n
+LoadCredential=google-api-key:/run/ops-orchestrator-secrets/current/google-api-key
+SetCredential=google-api-key:\n
+LoadCredential=cohere-api-key:/run/ops-orchestrator-secrets/current/cohere-api-key
+SetCredential=cohere-api-key:\n
+LoadCredential=moonshot-api-key:/run/ops-orchestrator-secrets/current/moonshot-api-key
+SetCredential=moonshot-api-key:\n
+LoadCredential=tencent-api-key:/run/ops-orchestrator-secrets/current/tencent-api-key
+SetCredential=tencent-api-key:\n
+LoadCredential=xai-api-key:/run/ops-orchestrator-secrets/current/xai-api-key
+SetCredential=xai-api-key:\n
+LoadCredential=openai-api-key:/run/ops-orchestrator-secrets/current/openai-api-key
+SetCredential=openai-api-key:\n
+LoadCredential=anthropic-api-key:/run/ops-orchestrator-secrets/current/anthropic-api-key
+SetCredential=anthropic-api-key:\n
+Environment=QWEN_API_KEY_FILE=%d/qwen-api-key
+Environment=DEEPSEEK_API_KEY_FILE=%d/deepseek-api-key
+Environment=Z_AI_API_KEY_FILE=%d/z-ai-api-key
+Environment=MISTRAL_AI_API_KEY_FILE=%d/mistral-ai-api-key
+Environment=MINIMAX_API_KEY_FILE=%d/minimax-api-key
+Environment=GOOGLE_API_KEY_FILE=%d/google-api-key
+Environment=COHERE_API_KEY_FILE=%d/cohere-api-key
+Environment=MOONSHOT_API_KEY_FILE=%d/moonshot-api-key
+Environment=TENCENT_API_KEY_FILE=%d/tencent-api-key
+Environment=XAI_API_KEY_FILE=%d/xai-api-key
+Environment=OPENAI_API_KEY_FILE=%d/openai-api-key
+Environment=ANTHROPIC_API_KEY_FILE=%d/anthropic-api-key
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=30
+TimeoutStopSec=20
+UMask=0077
+
+RuntimeDirectory=ops-orchestrator
+RuntimeDirectoryMode=0750
+StateDirectory=ops-orchestrator
+StateDirectoryMode=0700
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+KeyringMode=private
+RemoveIPC=yes
+LimitCORE=0
+LimitNOFILE=1024
+TasksMax=64
+MemoryHigh=384M
+MemoryMax=512M
+MemorySwapMax=0
+OOMPolicy=stop
+
+ReadOnlyPaths=/etc/ops-orchestrator
+ReadWritePaths=/var/lib/ops-orchestrator /run/ops-orchestrator
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+# Exact privileged transition for the human-approved NVIDIA remediation runbook.
+Cmnd_Alias OPSBROKER_NVIDIA_PACKAGE_REMEDIATION = \
+    /usr/local/libexec/ops-runbooks/nvidia-package-remediation ensure-580xx, \
+    /usr/local/libexec/ops-runbooks/nvidia-package-remediation status
+
+opsbroker ALL=(root) NOPASSWD: OPSBROKER_NVIDIA_PACKAGE_REMEDIATION

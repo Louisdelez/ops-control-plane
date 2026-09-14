@@ -1,0 +1,40 @@
+version: 1
+default: deny
+classes:
+  A:
+    approval: none
+    examples:
+      - read_metrics
+      - read_bounded_logs
+      - check_endpoint
+      - check_port
+      - check_disk
+      - collect_diagnostics
+  B:
+    approval: policy_budget
+    examples:
+      - restart_authorized_service_once
+      - retry_authorized_backup_once
+    limits:
+      max_attempts: 1
+      window_seconds: 3600
+      on_exhausted: escalate
+  C:
+    approval: human_required
+    approval_ttl_seconds: 1800
+    examples:
+      - deploy_production
+      - modify_database
+      - modify_firewall
+      - modify_dns
+      - modify_shared_infrastructure
+      - delete_or_destroy
+      - restore_backup
+      - rotate_critical_secret
+      - stop_global_service
+zulip:
+  approval_reactions:
+    approve: "check"
+    reject: "cross_mark"
+  authorized_actor_ids: []
+  fail_closed_when_unconfigured: true

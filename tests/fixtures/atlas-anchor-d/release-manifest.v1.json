@@ -1,0 +1,459 @@
+{
+  "schema_version": 1,
+  "release_id": "atlas-api-zulip-2026.09.08.11",
+  "architecture": "x86_64",
+  "trust_anchor": {
+    "version_directory": "/usr/local/lib/ops-control-plane/atlas-api-zulip-2026.09.08.11",
+    "manifest_path": "/usr/local/lib/ops-control-plane/atlas-api-zulip-2026.09.08.11/release-manifest.v1.json",
+    "bootstrap_helper_path": "/usr/local/lib/ops-control-plane/atlas-api-zulip-2026.09.08.11/control-plane-bootstrap",
+    "launcher_path": "/usr/local/lib/ops-control-plane/atlas-api-zulip-2026.09.08.11/launch-atlas-reviewed-rpm",
+    "manifest_mode": "0444",
+    "bootstrap_helper_mode": "0555",
+    "launcher_mode": "0555",
+    "launcher_sha256": "3c2bf03dfc18b7141edc7c1841dd633267d4bf1808eaf72c1211fe6862bb6b72",
+    "enrollment": "physical-polkit-tofu-v1"
+  },
+  "bootstrap": {
+    "mode": "one-shot-local-physical",
+    "actor": "codex-supervised",
+    "helper_sha256": "082d9ad7b6f5b6cb5111b66bf63f039237155523ac0ec0521c35f89de5558d23",
+    "allowed_when": "zulip-absent",
+    "consumed_marker": "/var/lib/ops-control-plane-bootstrap.consumed.json",
+    "state_root": "/var/lib/ops-control-plane-bootstrap",
+    "approver_state": "/var/lib/ops-control-plane-bootstrap/zulip-approver.json",
+    "recovery_units": [
+      "ops-control-plane-bootstrap-guard.service",
+      "ops-control-plane-bootstrap-recovery.service",
+      "ops-control-plane-bootstrap-recovery-activate.service"
+    ],
+    "requires_provider_keys": false,
+    "rollback_keeps_recovered_userpass": true,
+    "gui_protocol": {
+      "schema_version": 1,
+      "public_operations": [
+        "gui-preflight",
+        "gui-apply",
+      "gui-corrective-preflight",
+      "gui-corrective-apply",
+      "gui-recovery-preflight",
+      "gui-recovery-apply"
+      ],
+      "apply_magic": "ATLASBOOT1",
+      "control_magic": "ATLASCTL1",
+      "stdout": "bounded-jsonl",
+      "atlas_ancestry_required": true,
+      "launcher_mode": "sealed-rpm-payload-memfd",
+      "atlas_payload_member": "/usr/bin/ops-model-manager",
+      "atlas_payload_sha256": "daed3bb7e1502b441140ba5e640d1b122ca284cecdc6b5794f7d31ef6c0459b2",
+      "anonymous_pipes_required": true,
+      "mutation_boundary_event": "mutation-started",
+      "secrets_outside_process_memory": false
+    },
+    "openbao": {
+      "version": "2.6.2",
+      "address": "https://127.0.0.1:8200",
+      "listener_config": "/etc/openbao.d/openbao.hcl",
+      "listener_source_sha256": "fa35302f0917bfe0cb0a71e5926e0832b59a468cba2d0ceb967a93e3067fe034",
+      "recovery_credentials": [
+        "openbao-unseal-share-1",
+        "openbao-unseal-share-2"
+      ],
+      "tcp_legacy_endpoint_disabled": true,
+      "temporary_unix_socket": "/var/lib/openbao/ops-control-plane-bootstrap.sock",
+      "temporary_unix_listener_sha256": "bb5d13d1ce055fce8855a06cf750ab5515392c926cc7e289a3053cff147060d1",
+      "root_token_escrow": "/var/lib/ops-control-plane-bootstrap/root-token.cred",
+      "undo_escrow": "/var/lib/ops-control-plane-bootstrap/openbao-undo.cred",
+      "userpass_password_escrow": "/var/lib/ops-control-plane-bootstrap/userpass-password.cred",
+      "exclusive_local_maintenance": true,
+      "root_generation_max_remints": 1,
+      "root_generation_window_seconds": 10
+    },
+    "corrective": {
+      "mode": "single-terminal-rollback-repair",
+      "max_attempts": 1,
+      "consumed_marker": "/var/lib/ops-control-plane-bootstrap-corrective.consumed.json",
+      "state_root": "/var/lib/ops-control-plane-bootstrap-corrective",
+      "history_root": "/var/lib/ops-control-plane-bootstrap-history",
+      "recovery_helper": "/usr/local/libexec/ops-control-plane-bootstrap-corrective",
+      "recovery_unit": "ops-control-plane-bootstrap-corrective-recovery.service",
+      "recovery_path_unit": "ops-control-plane-bootstrap-corrective-recovery.path",
+      "authority_document": "AGENTS.md",
+      "recovery_from_release_id": "atlas-api-zulip-2026.09.08.10",
+      "recovery_from_source_tree_sha256": "3ede12c444991f12c81359963cfde50bc01d757fba8bf512a56f610a095f40ef",
+      "recovery_from_atlas_rpm_sha256": "a571034b4902e951d8af2754eb904be6fe68d0a582f006d34a6b694f77cad32f",
+      "recovery_from_bootstrap_helper_sha256": "93561352ce9684ce2eb3a1cc8a9abb13375d31073c5b6a515b716cb2e1c3a9d0",
+      "recovery_from_manifest_sha256": "96f137109ea240264f53e994e4e0179c9dbb90db485c595cd34bbf6a692214d2"
+    }
+  },
+  "supply_chain": {
+    "network_required": true,
+    "byte_for_byte_reproducible": false,
+    "python_binary_only": true,
+    "python_no_deps": true,
+    "python_artifact_hashes_present": false,
+    "python_closures": {
+      "orchestrator": {
+        "path": "orchestrator/requirements-runtime.lock",
+        "sha256": "ef5bc46ffd092e466ed60e653990cc65c8062f5edc086b543b1879af2f27afd7",
+        "distributions": 29
+      },
+      "broker": {
+        "path": "broker/requirements-mcp.txt",
+        "sha256": "c7866b7b58d9e455647369f95c72a695e209943ff8e34e4ff4ec6fec538dd234",
+        "distributions": 32
+      }
+    },
+    "atlas": {
+      "exit_code": 0,
+      "known_blocking_vulnerabilities": 0,
+      "warnings": 7,
+      "unmaintained_transitive_crates": 6,
+      "advisories": [
+        {
+          "id": "RUSTSEC-2024-0429",
+          "crate": "glib",
+          "version": "0.18.5",
+          "classification": "unsound-transitive"
+        }
+      ]
+    },
+    "hermes": {
+      "uv_version": "0.12.0",
+      "uv_lock_from_pinned_commit": true,
+      "locked_sync": true,
+      "bootstrap_script_pinned": false,
+      "source_archive_vendored": true,
+      "network_git_transport": false
+    }
+  },
+  "host": {
+    "os": {
+      "id": "fedora",
+      "version_id": "44",
+      "architecture": "x86_64"
+    },
+    "docker": {
+    "mode": "rootful",
+    "initial_state": "absent",
+    "in_place_upgrade_supported": false,
+    "rollback_preserves_named_volumes": true,
+    "rollback_named_volumes_root": "/var/backups/zulip-local",
+      "service": "docker.service",
+      "units": ["containerd.service", "docker.socket", "docker.service"],
+      "preinstalled_dependencies": ["container-selinux", "iptables-nft", "nftables"],
+      "daemon_config": {
+        "bridge": "none",
+        "firewall-backend": "iptables",
+        "ip-forward": false,
+        "ip-masq": false,
+        "ip6tables": false,
+        "iptables": true,
+        "userland-proxy": true
+      },
+      "network": {
+        "firewalld_required": true,
+        "fixed_networks": {
+          "zulip-local_backend": {
+            "bridge_name": "zulip-backend",
+            "compose_network": "backend",
+            "internal": true,
+            "masquerade": false,
+            "subnet": "172.30.10.0/24"
+          },
+          "zulip-local_frontend": {
+            "bridge_name": "zulip-frontend",
+            "compose_network": "frontend",
+            "internal": false,
+            "masquerade": false,
+            "subnet": "172.30.11.0/24"
+          }
+        },
+        "ipv4_forwarding_required": true,
+        "ipv6_forwarding_required": false
+      },
+      "repositories": ["fedora", "updates"],
+      "install_weak_dependencies": false,
+      "packages": {
+        "moby-engine": "moby-engine-0:29.7.2-1.fc44.x86_64",
+        "docker-cli": "docker-cli-0:29.7.2-1.fc44.x86_64",
+        "docker-compose": "docker-compose-0:5.5.0-1.fc44.x86_64"
+      },
+      "dependencies": {
+        "pigz": "pigz-0:2.8-8.fc44.x86_64",
+        "moby-filesystem": "moby-filesystem-0:29.7.2-1.fc44.noarch",
+        "container-selinux": "container-selinux-4:2.250.0-1.fc44.noarch",
+        "containerd": "containerd-0:2.3.4-1.fc44.x86_64",
+        "nftables": "nftables-1:1.1.6-2.fc44.x86_64",
+        "iptables-libs": "iptables-libs-0:1.8.11-13.fc44.x86_64",
+        "libmnl": "libmnl-0:1.0.5-9.fc44.x86_64",
+        "libnftnl": "libnftnl-0:1.3.1-2.fc44.x86_64",
+        "nftables-services": "nftables-services-1:1.1.6-2.fc44.noarch",
+        "libnetfilter_conntrack": "libnetfilter_conntrack-0:1.1.1-1.fc44.x86_64",
+        "libnfnetlink": "libnfnetlink-0:1.0.1-32.fc44.x86_64",
+        "tini-static": "tini-static-0:0.19.0-12.fc44.x86_64",
+        "runc": "runc-2:1.5.1-1.fc44.x86_64",
+        "iptables-nft": "iptables-nft-0:1.8.11-13.fc44.x86_64",
+        "selinux-policy": "selinux-policy-0:44.8-1.fc44.noarch",
+        "libseccomp": "libseccomp-0:2.6.1-2.fc44.x86_64",
+        "systemd": "systemd-0:259.8-1.fc44.x86_64",
+        "systemd-shared": "systemd-shared-0:259.8-1.fc44.x86_64",
+        "jansson": "jansson-0:2.14-4.fc44.x86_64",
+        "libselinux-utils": "libselinux-utils-0:3.11-1.fc44.x86_64",
+        "policycoreutils": "policycoreutils-0:3.11-2.fc44.x86_64",
+        "diffutils": "diffutils-0:3.12-5.fc44.x86_64",
+        "selinux-policy-targeted": "selinux-policy-targeted-0:44.8-1.fc44.noarch",
+        "libedit": "libedit-0:3.1-59.20260512cvs.fc44.x86_64",
+        "cryptsetup-libs": "cryptsetup-libs-0:2.8.7-1.fc44.x86_64",
+        "device-mapper-libs": "device-mapper-libs-0:1.02.212-2.fc44.x86_64",
+        "device-mapper": "device-mapper-0:1.02.212-2.fc44.x86_64",
+        "libfdisk": "libfdisk-0:2.41.5-1.fc44.x86_64",
+        "util-linux": "util-linux-0:2.41.5-1.fc44.x86_64",
+        "liblastlog2": "liblastlog2-0:2.41.5-1.fc44.x86_64",
+        "rpm-plugin-selinux": "rpm-plugin-selinux-0:6.0.2-1.fc44.x86_64"
+      }
+    }
+  },
+  "cutover": {
+    "local_inference": {
+      "mode": "disabled",
+      "units": ["ollama.service"],
+      "preserve_historical_artifacts": true
+    }
+  },
+  "source": {
+    "root": "/home/ops-user/ops-control-plane",
+    "roots": [
+      "AGENTS.md",
+      "README.md",
+      "apps/model-manager",
+      "bridges/zulip",
+      "broker",
+      "broker/config/executables.yaml",
+      "broker/config/rbac.yaml",
+      "broker/deploy/helpers/control-plane-deployment",
+      "broker/deploy/sudoers/ops-broker-control-plane-deployment",
+      "broker/requirements-mcp.txt",
+      "catalog",
+      "config/hermes",
+      "config/openbao",
+      "deploy/control-plane/README.md",
+      "deploy/control-plane/bin/control-plane-bootstrap",
+      "deploy/control-plane/bin/control-plane-deployment-worker",
+      "deploy/control-plane/ops-control-plane-deployment.tmpfiles",
+      "deploy/control-plane/release-manifest.v1.schema.json",
+      "deploy/control-plane/systemd",
+      "deploy/zulip-local",
+      "docs",
+      "memory/deploy",
+      "orchestrator",
+      "policies",
+      "provider-discovery",
+      "runbooks",
+      "runbooks/local/control-plane-deployment-status.yaml",
+      "scripts",
+      "systemd"
+    ],
+    "tree_algorithm": "sha256-tree-v1",
+    "tree_sha256": "0169a3fdbd0628cebb93b904a2a82343013c7c8bca4d7bae317dff9e4c648c00"
+  },
+  "artifacts": {
+    "hermes_source_archive": {
+      "source_path": "/home/ops-user/Téléchargements/Hermes-agent-v2026.8.31-29112bef.tar.gz",
+      "sha256": "76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a",
+      "format": "github-codeload-tar-gzip-v1",
+      "commit": "29112bef099274229cadff79cdff7bf7b99c4b77",
+      "git_tree_oid": "daaffc303ae437041b7f76be17c5f61b14f2ce99",
+      "canonical_tree_sha256": "7ecc4e3f45d65d6ab33907f9220c06daa66b118af2a0fbbf5df3f2e019776ad1",
+      "top_level_directory": "hermes-agent-29112bef099274229cadff79cdff7bf7b99c4b77",
+      "compressed_size": 69442866,
+      "expanded_size": 167028103,
+      "members": 11994,
+      "regular_files": 10925,
+      "directories": 1069,
+      "max_file_size": 3871968
+    },
+    "atlas_rpm": {
+      "source_path": "/home/ops-user/Téléchargements/Atlas-modeles-IA-0.1.0-1.x86_64.rpm",
+      "sha256": "8707a51b5139572a013c272c74d8f51d6769cd324f5bc45600c558065211b6be",
+      "payload_executable_path": "/usr/bin/ops-model-manager",
+      "payload_executable_sha256": "daed3bb7e1502b441140ba5e640d1b122ca284cecdc6b5794f7d31ef6c0459b2",
+      "name": "modeles-ia",
+      "initial_state": "absent",
+      "signed": false,
+      "version": "0.1.0",
+      "release": "1",
+      "architecture": "x86_64"
+    }
+  },
+  "components": {
+    "atlas": {
+      "version": "0.1.0",
+      "mode": "desktop-local"
+    },
+    "orchestrator": {
+      "version": "0.2.0",
+      "mode": "api-first"
+    },
+    "hermes": {
+      "version": "0.21.0",
+      "tag": "v2026.8.31",
+      "commit": "29112bef099274229cadff79cdff7bf7b99c4b77"
+    },
+    "zulip_bridge": {
+      "version": "0.3.0",
+      "mode": "local-only"
+    },
+    "zulip": {
+      "version": "12.2-0",
+      "origin": "https://zulip.ops.local:8443",
+      "images": {
+        "zulip": "765f0ab3caa49041989132ee1879d98dbab1df7695c27e713eac1f114d167755",
+        "postgresql": "e71ba8616fa42cdc1b248f51263d9290c29681cb8c1992eb9b498af0bb656b29",
+        "memcached": "c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7",
+        "rabbitmq": "15e7b5e60af2d2147f8d74eef5b93c29501cd644361ca93bc854e409c2dde624",
+        "redis": "becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576"
+      }
+    },
+    "model_catalogue": {
+      "schema_version": 2,
+      "revision": "catalogue-api-ia-2026-09-05.3",
+      "sha256": "7011ba973302016dd29bf2c77af9f6155e1086452c412b058d8fc61091e87a58",
+      "cards": 58,
+      "provider_accounts": 21,
+      "runtime": {
+        "static_cards": 5,
+        "static_deployments": 7,
+        "dynamic_cards": 9,
+        "invocable_cards": 14,
+        "blocked_cards": 44,
+        "provider_deployments": 19,
+        "provider_inventory_sha256": "0679d0cda70e8ed0f3705cba7c4ca2d9ccce8ce016b0bef2aec4c95a89a45f7b",
+        "blocked_reasons": {
+          "token_prices_not_officially_verified": 28,
+          "quarantined": 11,
+          "exact_model_id_unverified": 4,
+          "minimax_m3_chat_api_contract_unverified": 1
+        }
+      }
+    },
+    "provider_integrations": {
+      "schema_version": 1,
+      "revision": "provider-integrations-2026-09-05.1",
+      "sha256": "9b524fb3736b459ac7ccd831ae6a31d870116951251f718626f21ef2a412928f",
+      "provider_accounts": 21
+    }
+  },
+  "runtime": {
+    "encrypted_credentials": [
+      "ops-orchestrator-openbao-role-id",
+      "ops-orchestrator-openbao-secret-id",
+      "hermes-openbao-role-id",
+      "hermes-openbao-secret-id",
+      "hermes-openbao-secret-id-accessor",
+      "zulip-local-runtime-role-id",
+      "zulip-local-runtime-secret-id",
+      "zulip-local-runtime-secret-id-accessor",
+      "zulip-local-bootstrap-role-id",
+      "zulip-local-bootstrap-secret-id",
+      "zulip-local-bootstrap-secret-id-accessor",
+      "zulip-openbao-role-id",
+      "zulip-openbao-secret-id",
+      "zulip-openbao-secret-id-accessor"
+    ],
+    "zulip_owner_password_file": "/run/ops-control-plane-deployment/zulip-owner-password",
+    "finance_isolation": {
+      "worker_user": "opsfinance",
+      "worker_group": "opsfinance",
+      "client_user": "opsorchestrator",
+      "socket_path": "/run/ops-orchestrator-finance/api.sock",
+      "socket_mode": "0660",
+      "stateless": true
+    },
+    "provider_credential_scopes": {
+      "ops-orchestrator.service": [
+        "qwen-api-key",
+        "deepseek-api-key",
+        "z-ai-api-key",
+        "mistral-ai-api-key",
+        "minimax-api-key",
+        "google-api-key",
+        "cohere-api-key",
+        "moonshot-api-key",
+        "tencent-api-key",
+        "xai-api-key",
+        "openai-api-key",
+        "anthropic-api-key"
+      ],
+      "ops-orchestrator-provider-finance-daemon.service": [
+        "deepseek-api-key",
+        "moonshot-api-key",
+        "stepfun-api-key"
+      ],
+      "ops-orchestrator-provider-finance.service": [],
+      "ops-orchestrator-hermes-facade.service": [
+        "qwen-api-key",
+        "deepseek-api-key",
+        "hermes-facade-token"
+      ]
+    },
+    "provider_optional_credential_scopes": {
+      "ops-orchestrator.service": [
+        "qwen-api-key",
+        "deepseek-api-key",
+        "z-ai-api-key",
+        "mistral-ai-api-key",
+        "minimax-api-key",
+        "google-api-key",
+        "cohere-api-key",
+        "moonshot-api-key",
+        "tencent-api-key",
+        "xai-api-key",
+        "openai-api-key",
+        "anthropic-api-key"
+      ],
+      "ops-orchestrator-provider-finance-daemon.service": [
+        "deepseek-api-key",
+        "moonshot-api-key",
+        "stepfun-api-key"
+      ],
+      "ops-orchestrator-provider-finance.service": [],
+      "ops-orchestrator-hermes-facade.service": [
+        "qwen-api-key",
+        "deepseek-api-key"
+      ]
+    },
+    "dynamic_services": [
+      "zulip-alertmanager-query.service"
+    ],
+    "services": [
+      "ops-orchestrator-secrets.service",
+      "ops-orchestrator-provider-finance-daemon.service",
+      "ops-orchestrator.service",
+      "ops-orchestrator-hermes-facade.service",
+      "ops-orchestrator-metrics.timer",
+      "ops-orchestrator-provider-finance.timer",
+      "hermes-gateway.service",
+      "zulip-local-secrets.service",
+      "zulip-local.service",
+      "zulip-local-health.timer",
+      "zulip-local-backup.timer",
+      "zulip-alertmanager-query.socket",
+      "zulip-approval-bridge.service",
+      "ops-broker-audit-verify.timer",
+      "ops-broker-backup.timer",
+      "ops-broker-audit-verify.service",
+      "ops-broker-backup.service",
+      "ops-broker-backup-metric-success.service",
+      "ops-broker-backup-metric-failure.service",
+      "zulip-local-health.service",
+      "zulip-local-backup.service",
+      "zulip-alertmanager-query.service"
+    ]
+  },
+  "rollback": {
+    "automatic_on_failure": true,
+    "explicit_last_transaction": false,
+    "zulip_restore_identity_file": "/run/ops-control-plane-deployment/zulip-restore-identity",
+    "secret_material_backed_up": false
+  }
+}

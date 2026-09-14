@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Dell Ops status summary
+
+[Timer]
+OnCalendar=*-*-* 08:15:00
+RandomizedDelaySec=5m
+Persistent=true
+Unit=ops-daily-report.service
+
+[Install]
+WantedBy=timers.target

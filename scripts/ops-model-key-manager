@@ -1,0 +1,836 @@
+#!/usr/bin/python3 -I
+"""Rotate one allowlisted model-provider key without exposing it to the WebView.
+
+The installed copy is intentionally a root-owned program executed as ``ops-user``.
+It receives only the fixed ``set`` or ``set-stdin`` action and a
+provider-account identifier. ``set`` retains the native ask-password flow;
+``set-stdin`` accepts one strict binary frame over a private anonymous pipe for
+the Tauri UI. Credentials remain out of argv, environment, logs, and files.
+After OpenBao confirms the write and token revocation, a single root-owned
+no-argument helper refreshes local consumers; it receives no provider identity
+or secret.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import fcntl
+import hmac
+import json
+import os
+from pathlib import Path
+import pwd
+import resource
+import select
+import ssl
+import stat
+import subprocess
+import sys
+import time
+from types import MappingProxyType
+from typing import Any
+import unicodedata
+import urllib.error
+import urllib.request
+
+
+EXPECTED_USER = "ops-user"
+INSTALLED_PROGRAM = Path("/usr/local/libexec/ops-model-key-manager")
+RELOAD_PROGRAM = Path("/usr/local/libexec/ops-model-credentials-reload")
+SUDO_PROGRAM = "/usr/bin/sudo"
+ASK_PASSWORD_PROGRAM = "/usr/bin/systemd-ask-password"
+BAO_ORIGIN = "https://127.0.0.1:8200"
+BAO_CA = Path("/etc/openbao.d/tls/ca.crt")
+LOGIN_PATH = "/v1/auth/userpass/login/ops-user"
+REVOKE_PATH = "/v1/auth/token/revoke-self"
+HTTP_TIMEOUT_SECONDS = 4.0
+PROMPT_TIMEOUT_SECONDS = 180
+MAX_RESPONSE_BYTES = 32 * 1024
+MAX_PASSWORD_BYTES = 400
+MAX_API_KEY_BYTES = 4096
+MAX_TOKEN_LENGTH = 2048
+PR_SET_DUMPABLE = 4
+STDIN_MAGIC = b"ATLASKEY1\n"
+STDIN_TIMEOUT_SECONDS = 60.0
+
+
+# This is deliberately duplicated rather than derived from user input or from
+# a mutable catalogue.  Adding a catalogue card must never grant a credential
+# write path implicitly.
+PROVIDER_TARGETS = MappingProxyType(
+    {
+        "jina": (
+            "/v1/kv-infra-shared/data/llm/providers/jina",
+            "/v1/kv-infra-shared/metadata/llm/providers/jina",
+        ),
+        "voyage": (
+            "/v1/kv-infra-shared/data/llm/providers/voyage",
+            "/v1/kv-infra-shared/metadata/llm/providers/voyage",
+        ),
+        "siliconflow": (
+            "/v1/kv-infra-shared/data/llm/siliconflow",
+            "/v1/kv-infra-shared/metadata/llm/siliconflow",
+        ),
+        "alibaba": (
+            "/v1/kv-infra-shared/data/llm/qwen",
+            "/v1/kv-infra-shared/metadata/llm/qwen",
+        ),
+        "z-ai": (
+            "/v1/kv-infra-shared/data/llm/providers/z-ai",
+            "/v1/kv-infra-shared/metadata/llm/providers/z-ai",
+        ),
+        "mistral-ai": (
+            "/v1/kv-infra-shared/data/llm/providers/mistral-ai",
+            "/v1/kv-infra-shared/metadata/llm/providers/mistral-ai",
+        ),
+        "deepseek": (
+            "/v1/kv-infra-shared/data/llm/deepseek",
+            "/v1/kv-infra-shared/metadata/llm/deepseek",
+        ),
+        "minimax": (
+            "/v1/kv-infra-shared/data/llm/providers/minimax",
+            "/v1/kv-infra-shared/metadata/llm/providers/minimax",
+        ),
+        "google": (
+            "/v1/kv-infra-shared/data/llm/providers/google",
+            "/v1/kv-infra-shared/metadata/llm/providers/google",
+        ),
+        "cohere": (
+            "/v1/kv-infra-shared/data/llm/providers/cohere",
+            "/v1/kv-infra-shared/metadata/llm/providers/cohere",
+        ),
+        "moonshot": (
+            "/v1/kv-infra-shared/data/llm/providers/moonshot",
+            "/v1/kv-infra-shared/metadata/llm/providers/moonshot",
+        ),
+        "tencent": (
+            "/v1/kv-infra-shared/data/llm/providers/tencent",
+            "/v1/kv-infra-shared/metadata/llm/providers/tencent",
+        ),
+        "xai": (
+            "/v1/kv-infra-shared/data/llm/providers/xai",
+            "/v1/kv-infra-shared/metadata/llm/providers/xai",
+        ),
+        "openai": (
+            "/v1/kv-infra-shared/data/llm/providers/openai",
+            "/v1/kv-infra-shared/metadata/llm/providers/openai",
+        ),
+        "bytedance": (
+            "/v1/kv-infra-shared/data/llm/providers/bytedance",
+            "/v1/kv-infra-shared/metadata/llm/providers/bytedance",
+        ),
+        "anthropic": (
+            "/v1/kv-infra-shared/data/llm/providers/anthropic",
+            "/v1/kv-infra-shared/metadata/llm/providers/anthropic",
+        ),
+        "nvidia": (
+            "/v1/kv-infra-shared/data/llm/providers/nvidia",
+            "/v1/kv-infra-shared/metadata/llm/providers/nvidia",
+        ),
+        "aws": (
+            "/v1/kv-infra-shared/data/llm/providers/aws",
+            "/v1/kv-infra-shared/metadata/llm/providers/aws",
+        ),
+        "meta": (
+            "/v1/kv-infra-shared/data/llm/providers/meta",
+            "/v1/kv-infra-shared/metadata/llm/providers/meta",
+        ),
+        "microsoft": (
+            "/v1/kv-infra-shared/data/llm/providers/microsoft",
+            "/v1/kv-infra-shared/metadata/llm/providers/microsoft",
+        ),
+        "xiaomi": (
+            "/v1/kv-infra-shared/data/llm/providers/xiaomi",
+            "/v1/kv-infra-shared/metadata/llm/providers/xiaomi",
+        ),
+        "baidu": (
+            "/v1/kv-infra-shared/data/llm/providers/baidu",
+            "/v1/kv-infra-shared/metadata/llm/providers/baidu",
+        ),
+        "baichuan": (
+            "/v1/kv-infra-shared/data/llm/providers/baichuan",
+            "/v1/kv-infra-shared/metadata/llm/providers/baichuan",
+        ),
+        "stepfun": (
+            "/v1/kv-infra-shared/data/llm/providers/stepfun",
+            "/v1/kv-infra-shared/metadata/llm/providers/stepfun",
+        ),
+    }
+)
+
+_REQUEST_METHODS = {
+    LOGIN_PATH: frozenset({"POST"}),
+    REVOKE_PATH: frozenset({"POST"}),
+}
+for _data_path, _metadata_path in PROVIDER_TARGETS.values():
+    _REQUEST_METHODS[_data_path] = frozenset({"POST"})
+    _REQUEST_METHODS[_metadata_path] = frozenset({"GET"})
+_REQUEST_METHODS = MappingProxyType(_REQUEST_METHODS)
+
+
+class KeyManagerError(RuntimeError):
+    """A deliberately non-sensitive error suitable for internal control flow."""
+
+
+class PromptCancelled(KeyManagerError):
+    """The native credential prompt was cancelled or timed out."""
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(  # type: ignore[override]
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        raise KeyManagerError("The local OpenBao request was redirected.")
+
+
+def _wipe(value: bytearray | None) -> None:
+    if value is not None:
+        value[:] = b"\x00" * len(value)
+
+
+def _harden_process() -> None:
+    """Disable process dumps before any credential is collected."""
+
+    os.umask(0o077)
+    # In particular, discard SSLKEYLOGFILE, proxy settings, Python injection
+    # variables, and any unrelated credentials inherited from the desktop app.
+    os.environ.clear()
+    os.environ.update({"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
+    try:
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        libc = ctypes.CDLL(None, use_errno=True)
+        prctl = libc.prctl
+        prctl.argtypes = [
+            ctypes.c_int,
+            ctypes.c_ulong,
+            ctypes.c_ulong,
+            ctypes.c_ulong,
+            ctypes.c_ulong,
+        ]
+        prctl.restype = ctypes.c_int
+        result = prctl(PR_SET_DUMPABLE, 0, 0, 0, 0)
+    except (AttributeError, OSError, ValueError):
+        result = -1
+    if result != 0:
+        raise KeyManagerError("Process hardening failed.")
+
+
+def _validate_root_owned_regular(path: Path, description: str) -> None:
+    failed = False
+    try:
+        info = path.lstat()
+    except OSError:
+        failed = True
+        info = None
+    if info is not None and (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != 0
+        or stat.S_IMODE(info.st_mode) & 0o022
+    ):
+        failed = True
+    if failed:
+        raise KeyManagerError(f"The installed {description} is not trusted.")
+
+
+def _validate_runtime(*, require_reload: bool = True) -> None:
+    try:
+        account = pwd.getpwnam(EXPECTED_USER)
+    except KeyError:
+        raise KeyManagerError("The expected local account is unavailable.") from None
+    if os.getuid() != account.pw_uid or os.geteuid() != account.pw_uid:
+        raise KeyManagerError(
+            "The credential helper has an invalid execution identity."
+        )
+    if not sys.flags.isolated:
+        raise KeyManagerError("The credential helper requires isolated Python mode.")
+    if Path(__file__).absolute() != INSTALLED_PROGRAM:
+        raise KeyManagerError(
+            "The credential helper is not running from its trusted path."
+        )
+    _validate_root_owned_regular(INSTALLED_PROGRAM, "credential helper")
+    if require_reload:
+        _validate_root_owned_regular(RELOAD_PROGRAM, "credential reload helper")
+    _validate_root_owned_regular(BAO_CA, "OpenBao CA")
+
+
+def _prompt_environment() -> dict[str, str]:
+    uid = pwd.getpwnam(EXPECTED_USER).pw_uid
+    runtime = f"/run/user/{uid}"
+    return {
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "XDG_RUNTIME_DIR": runtime,
+        "DBUS_SESSION_BUS_ADDRESS": f"unix:path={runtime}/bus",
+    }
+
+
+def _ask_secret(prompt_id: str, message: str, maximum: int) -> bytearray:
+    command = [
+        ASK_PASSWORD_PROGRAM,
+        "--no-tty",
+        "--user",
+        "--echo=no",
+        "--emoji=no",
+        f"--timeout={PROMPT_TIMEOUT_SECONDS}",
+        f"--id={prompt_id}",
+        "-n",
+        message,
+    ]
+    completed = None
+    prompt_failed = False
+    try:
+        completed = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=PROMPT_TIMEOUT_SECONDS + 5,
+            env=_prompt_environment(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        prompt_failed = True
+    if prompt_failed or completed is None:
+        raise PromptCancelled("The native credential prompt did not complete.")
+
+    captured = bytearray(completed.stdout or b"")
+    completed.stdout = b""
+    if completed.returncode != 0:
+        _wipe(captured)
+        raise PromptCancelled("The native credential prompt was cancelled.")
+    if not captured or len(captured) > maximum:
+        _wipe(captured)
+        raise KeyManagerError("The supplied credential has an invalid length.")
+    if any(character in captured for character in (0, 10, 13)):
+        _wipe(captured)
+        raise KeyManagerError("The supplied credential contains invalid characters.")
+    return captured
+
+
+def _validate_private_stdin_pipe() -> None:
+    try:
+        metadata = os.fstat(0)
+        access = fcntl.fcntl(0, fcntl.F_GETFL) & os.O_ACCMODE
+    except OSError as exc:
+        raise KeyManagerError("The Atlas credential pipe is unavailable.") from exc
+    if (
+        not stat.S_ISFIFO(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
+        or access != os.O_RDONLY
+        or os.isatty(0)
+    ):
+        raise KeyManagerError("The Atlas credential input is not a private pipe.")
+
+
+def _read_stdin_exact(size: int, *, deadline: float) -> bytearray:
+    if size < 0 or size > max(MAX_PASSWORD_BYTES, MAX_API_KEY_BYTES):
+        raise KeyManagerError("The Atlas credential frame is oversized.")
+    value = bytearray()
+    chunk = b""
+    try:
+        while len(value) < size:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise KeyManagerError("The Atlas credential frame timed out.")
+            try:
+                ready, _, _ = select.select([0], [], [], remaining)
+                if not ready:
+                    continue
+                chunk = os.read(0, size - len(value))
+            except (OSError, ValueError) as exc:
+                raise KeyManagerError("The Atlas credential pipe failed.") from exc
+            if not chunk:
+                raise KeyManagerError("The Atlas credential frame is incomplete.")
+            value.extend(chunk)
+            chunk = b""
+        return value
+    except BaseException:
+        chunk = b""
+        _wipe(value)
+        raise
+
+
+def _read_stdin_length(*, deadline: float, maximum: int) -> int:
+    encoded = _read_stdin_exact(4, deadline=deadline)
+    try:
+        value = int.from_bytes(encoded, "big")
+    finally:
+        _wipe(encoded)
+    if value <= 0 or value > maximum:
+        raise KeyManagerError("The Atlas credential length is invalid.")
+    return value
+
+
+def _read_stdin_credentials() -> tuple[bytearray, bytearray]:
+    """Read exactly one ATLASKEY1 frame and require immediate EOF."""
+
+    _validate_private_stdin_pipe()
+    deadline = time.monotonic() + STDIN_TIMEOUT_SECONDS
+    magic: bytearray | None = None
+    password: bytearray | None = None
+    api_key: bytearray | None = None
+    try:
+        magic = _read_stdin_exact(len(STDIN_MAGIC), deadline=deadline)
+        if not hmac.compare_digest(magic, STDIN_MAGIC):
+            raise KeyManagerError("The Atlas credential framing is invalid.")
+        _wipe(magic)
+        password_length = _read_stdin_length(
+            deadline=deadline, maximum=MAX_PASSWORD_BYTES
+        )
+        password = _read_stdin_exact(password_length, deadline=deadline)
+        api_key_length = _read_stdin_length(
+            deadline=deadline, maximum=MAX_API_KEY_BYTES
+        )
+        api_key = _read_stdin_exact(api_key_length, deadline=deadline)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise KeyManagerError("Atlas did not close the credential pipe.")
+            try:
+                ready, _, _ = select.select([0], [], [], remaining)
+                if not ready:
+                    continue
+                trailing = os.read(0, 1)
+            except (OSError, ValueError) as exc:
+                raise KeyManagerError("The Atlas credential pipe failed.") from exc
+            if trailing:
+                trailing = b""
+                raise KeyManagerError("The Atlas credential frame has trailing data.")
+            break
+        return password, api_key
+    except BaseException:
+        _wipe(password)
+        _wipe(api_key)
+        raise
+    finally:
+        _wipe(magic)
+
+
+def _rotate_from_stdin(provider_id: str) -> None:
+    password_buffer: bytearray | None = None
+    api_key_buffer: bytearray | None = None
+    password = ""
+    api_key = ""
+    try:
+        password_buffer, api_key_buffer = _read_stdin_credentials()
+        password = _decode_password(password_buffer)
+        api_key = _decode_api_key(api_key_buffer)
+        _rotate(provider_id, password, api_key)
+    finally:
+        password = ""
+        api_key = ""
+        _wipe(password_buffer)
+        _wipe(api_key_buffer)
+
+
+def _decode_password(value: bytearray) -> str:
+    invalid = False
+    try:
+        decoded = bytes(value).decode("utf-8", errors="strict")
+    except UnicodeError:
+        invalid = True
+        decoded = ""
+    if (
+        invalid
+        or not 14 <= len(decoded) <= 100
+        or decoded != decoded.strip()
+        or any(unicodedata.category(character) == "Cc" for character in decoded)
+    ):
+        decoded = ""
+        raise KeyManagerError("The OpenBao password is invalid.")
+    return decoded
+
+
+def _decode_api_key(value: bytearray) -> str:
+    invalid = False
+    try:
+        decoded = bytes(value).decode("ascii", errors="strict")
+    except UnicodeError:
+        invalid = True
+        decoded = ""
+    if (
+        invalid
+        or len(decoded) < 8
+        or any(ord(character) < 0x21 or ord(character) > 0x7E for character in decoded)
+    ):
+        decoded = ""
+        raise KeyManagerError("The provider API key is invalid.")
+    return decoded
+
+
+def _validated_token(value: Any) -> str:
+    valid = (
+        isinstance(value, str)
+        and 16 <= len(value) <= MAX_TOKEN_LENGTH
+        and not any(
+            ord(character) < 0x21 or ord(character) > 0x7E for character in value
+        )
+    )
+    if not valid:
+        value = None
+        raise KeyManagerError("OpenBao returned an invalid session token.")
+    return value
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    context = ssl.create_default_context(cafile=str(BAO_CA))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.check_hostname = True
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+        urllib.request.HTTPSHandler(context=context),
+    )
+
+
+def _request(
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    token: str | None = None,
+    expect_json: bool,
+    accepted_error_statuses: frozenset[int] = frozenset(),
+) -> tuple[int, dict[str, Any] | None]:
+    if method not in _REQUEST_METHODS.get(path, frozenset()):
+        payload = None
+        token = None
+        raise KeyManagerError("An internal OpenBao request was rejected.")
+
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "ops-model-key-manager/1",
+    }
+    if token is not None:
+        token_invalid = False
+        try:
+            validated_token = _validated_token(token)
+        except BaseException:
+            token_invalid = True
+            validated_token = ""
+        token = None
+        if token_invalid:
+            payload = None
+            headers.clear()
+            raise KeyManagerError("An invalid OpenBao session was rejected.")
+        headers["X-Vault-Token"] = validated_token
+        validated_token = ""
+    encoding_failed = False
+    try:
+        body = json.dumps(payload or {}, separators=(",", ":")).encode("utf-8")
+        request = urllib.request.Request(
+            BAO_ORIGIN + path,
+            data=body,
+            headers=headers,
+            method=method,
+        )
+    except (TypeError, ValueError, UnicodeError):
+        encoding_failed = True
+        body = b""
+        request = None
+    if encoding_failed:
+        payload = None
+        token = None
+        headers.clear()
+        raise KeyManagerError("The local OpenBao request could not be encoded.")
+
+    raw = b""
+    status: int | None = None
+    transport_failed = False
+    try:
+        with _opener().open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            status = response.status
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as error:
+        status = error.code
+        try:
+            error.close()
+        except OSError:
+            pass
+    except (KeyManagerError, OSError, ssl.SSLError, urllib.error.URLError):
+        transport_failed = True
+
+    # Raise only after leaving the exception handler.  This keeps transport
+    # exceptions (which may retain a request object) out of our exception chain.
+    if transport_failed or status is None:
+        payload = None
+        token = None
+        headers.clear()
+        body = b""
+        request = None
+        raw = b""
+        raise KeyManagerError("The local OpenBao request failed.")
+    if status in accepted_error_statuses:
+        return status, None
+    if status not in {200, 204}:
+        payload = None
+        token = None
+        headers.clear()
+        body = b""
+        request = None
+        raw = b""
+        raise KeyManagerError("OpenBao rejected the operation.")
+    if len(raw) > MAX_RESPONSE_BYTES:
+        payload = None
+        token = None
+        headers.clear()
+        body = b""
+        request = None
+        raw = b""
+        raise KeyManagerError("OpenBao returned an oversized response.")
+    if not expect_json:
+        return status, None
+    invalid_json = False
+    try:
+        document = json.loads(raw)
+    except (UnicodeError, json.JSONDecodeError):
+        invalid_json = True
+        document = None
+    if invalid_json or not isinstance(document, dict):
+        payload = None
+        token = None
+        headers.clear()
+        body = b""
+        request = None
+        raw = b""
+        document = None
+        raise KeyManagerError("OpenBao returned an invalid document.")
+    return status, document
+
+
+def _login(password: str) -> str:
+    login_failed = False
+    document: dict[str, Any] | None = None
+    try:
+        _, document = _request(
+            "POST",
+            LOGIN_PATH,
+            payload={"password": password},
+            expect_json=True,
+        )
+    except BaseException:
+        login_failed = True
+    password = ""
+    if login_failed:
+        raise KeyManagerError("OpenBao authentication failed.")
+    auth = document.get("auth") if isinstance(document, dict) else None
+    token = auth.get("client_token") if isinstance(auth, dict) else None
+    document = None
+    auth = None
+    token_invalid = False
+    try:
+        validated = _validated_token(token)
+    except BaseException:
+        token_invalid = True
+        validated = ""
+    token = None
+    if token_invalid:
+        raise KeyManagerError("OpenBao authentication returned an invalid session.")
+    return validated
+
+
+def _current_version(metadata_path: str, token: str) -> int:
+    request_failed = False
+    status = 0
+    document: dict[str, Any] | None = None
+    try:
+        status, document = _request(
+            "GET",
+            metadata_path,
+            token=token,
+            expect_json=True,
+            accepted_error_statuses=frozenset({404}),
+        )
+    except BaseException:
+        request_failed = True
+    token = ""
+    if request_failed:
+        raise KeyManagerError("OpenBao KV metadata could not be read.")
+    if status == 404:
+        return 0
+    if status != 200:
+        raise KeyManagerError("OpenBao returned an invalid KV metadata status.")
+    data = document.get("data") if isinstance(document, dict) else None
+    version = data.get("current_version") if isinstance(data, dict) else None
+    if isinstance(version, bool) or not isinstance(version, int) or version < 0:
+        raise KeyManagerError("OpenBao returned invalid KV metadata.")
+    return version
+
+
+def _rotate(provider_id: str, password: str, api_key: str) -> None:
+    data_path, metadata_path = PROVIDER_TARGETS[provider_id]
+    login_failed = False
+    token = ""
+    try:
+        token = _login(password)
+    except BaseException:
+        login_failed = True
+    password = ""
+    if login_failed:
+        api_key = ""
+        raise KeyManagerError("OpenBao authentication failed.")
+    write_succeeded = False
+    revoke_succeeded = False
+    payload: dict[str, Any] = {}
+    try:
+        try:
+            version = _current_version(metadata_path, token)
+            payload = {"data": {"api_key": api_key}}
+            payload["options"] = {"cas": version}
+            _request(
+                "POST",
+                data_path,
+                payload=payload,
+                token=token,
+                expect_json=False,
+            )
+            write_succeeded = True
+        except BaseException:
+            write_succeeded = False
+        finally:
+            secret_data = payload.get("data")
+            if isinstance(secret_data, dict):
+                secret_data["api_key"] = ""
+            payload.clear()
+            api_key = ""
+    finally:
+        try:
+            _request(
+                "POST",
+                REVOKE_PATH,
+                payload={},
+                token=token,
+                expect_json=False,
+            )
+            revoke_succeeded = True
+        except BaseException:
+            revoke_succeeded = False
+    token = ""
+    password = ""
+    api_key = ""
+    payload.clear()
+    if not write_succeeded or not revoke_succeeded:
+        raise KeyManagerError("The provider credential rotation failed.")
+
+
+def _rotate_from_native_prompts(provider_id: str) -> None:
+    password_buffer: bytearray | None = None
+    api_key_buffer: bytearray | None = None
+    password = ""
+    api_key = ""
+    try:
+        password_buffer = _ask_secret(
+            "ops-model-key-manager-openbao-password",
+            "Mot de passe OpenBao de ops-user",
+            MAX_PASSWORD_BYTES,
+        )
+        password = _decode_password(password_buffer)
+        api_key_buffer = _ask_secret(
+            f"ops-model-key-manager-{provider_id}-api-key",
+            f"Nouvelle clé API pour {provider_id}",
+            MAX_API_KEY_BYTES,
+        )
+        api_key = _decode_api_key(api_key_buffer)
+        _rotate(provider_id, password, api_key)
+    finally:
+        password = ""
+        api_key = ""
+        _wipe(password_buffer)
+        _wipe(api_key_buffer)
+
+
+def _reload_consumers() -> None:
+    """Request the single root-owned, no-argument local reload transition."""
+
+    completed = subprocess.run(
+        [SUDO_PROGRAM, "-n", "--", str(RELOAD_PROGRAM)],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=180,
+        env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+    )
+    if completed.returncode != 0:
+        raise KeyManagerError("The local model services did not reload.")
+
+
+def _parse_request(argv: list[str]) -> tuple[str, str]:
+    if (
+        len(argv) != 3
+        or argv[1] not in {"set", "set-stdin", "store-stdin"}
+        or argv[2] not in PROVIDER_TARGETS
+    ):
+        raise KeyManagerError(
+            "The action requires exactly one allowlisted provider account."
+        )
+    return argv[1], argv[2]
+
+
+def _parse_provider(argv: list[str]) -> str:
+    return _parse_request(argv)[1]
+
+
+def _emit(status: str, provider_id: str | None) -> None:
+    if status not in {"rotated", "stored", "cancelled", "failed"}:
+        status = "failed"
+    safe_provider = provider_id if provider_id in PROVIDER_TARGETS else None
+    output = json.dumps(
+        {"status": status, "provider_account_id": safe_provider},
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    if len(output) > 128:
+        output = '{"provider_account_id":null,"status":"failed"}'
+    sys.stdout.write(output + "\n")
+    sys.stdout.flush()
+
+
+def main(argv: list[str] | None = None) -> int:
+    global BAO_CA
+    arguments = list(sys.argv if argv is None else argv)
+    action = ""
+    provider_id: str | None = None
+    try:
+        action, provider_id = _parse_request(arguments)
+    except (Exception, KeyboardInterrupt):
+        _emit("failed", None)
+        return 1
+
+    try:
+        _harden_process()
+        if action == "store-stdin":
+            BAO_CA = Path("/etc/pki/ca-trust/source/anchors/openbao-local.crt")
+            _validate_runtime(require_reload=False)
+        else:
+            _validate_runtime()
+        if action in {"set-stdin", "store-stdin"}:
+            _rotate_from_stdin(provider_id)
+        else:
+            _rotate_from_native_prompts(provider_id)
+        if action != "store-stdin":
+            _reload_consumers()
+    except PromptCancelled:
+        _emit("cancelled", provider_id)
+        return 2
+    except (Exception, KeyboardInterrupt):
+        _emit("failed", provider_id)
+        return 1
+
+    _emit("stored" if action == "store-stdin" else "rotated", provider_id)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

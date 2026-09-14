@@ -1,0 +1,19 @@
+id: backup.recovery-seed-copy.v1
+version: 1
+project: infra-shared
+action_class: C
+description: Copier trois archives age vérifiées du 11 septembre vers le NAS ou VPS, dans un nouveau répertoire privé, sans clé privée ni remplacement de données existantes
+timeout_seconds: 120
+command:
+  argv:
+    - /usr/bin/sudo
+    - -n
+    - /usr/local/libexec/ops-runbooks/recovery-seed-copy
+    - "{resource}"
+parameters:
+  resource:
+    type: enum
+    values: [nas, edge-vps]
+output:
+  max_bytes: 4096
+  redact: true

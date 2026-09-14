@@ -1,0 +1,10 @@
+[Unit]
+Description=Zulip private ingress from OVH over WireGuard
+After=network-online.target wg-quick@wg0.service
+[Socket]
+ListenStream=198.51.100.2:18443
+NoDelay=true
+IPAddressDeny=any
+IPAddressAllow=198.51.100.1
+[Install]
+WantedBy=sockets.target

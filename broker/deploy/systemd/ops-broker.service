@@ -1,0 +1,57 @@
+[Unit]
+Description=Fail-closed operations broker
+Documentation=file:///opt/ops-broker/README.md
+Requires=ops-broker.socket
+After=ops-broker.socket
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=opsbroker
+Group=opsbroker-api
+SupplementaryGroups=opsbroker
+WorkingDirectory=/var/lib/ops-broker
+EnvironmentFile=/etc/ops-broker/broker.env
+Environment=OPS_BROKER_FD=3
+Environment=OPS_BROKER_API_MODE=approvals-only
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/ops-broker/venv/bin/ops-broker
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=30
+KillMode=mixed
+UMask=0007
+
+# Class-B and separately human-approved class-C runbooks invoke root-owned
+# dispatchers through exact sudoers argv. Package mutation is delegated onward
+# to a fixed root systemd unit; this broker remains read-only under this mount
+# namespace. NoNewPrivileges would disable the narrow sudo transitions.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProcSubset=all
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+RemoveIPC=yes
+KeyringMode=private
+ReadWritePaths=/var/lib/ops-broker -/run/sudo -/run/lock
+InaccessiblePaths=-/var/lib/hermes -/var/lib/zulip-bridge
+
+[Install]
+WantedBy=multi-user.target

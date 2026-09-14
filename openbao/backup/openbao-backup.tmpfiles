@@ -1,0 +1,3 @@
+d /var/lib/openbao-backup 0700 openbao-backup openbao-backup -
+d /var/backups/openbao 0700 openbao-backup openbao-backup -
+d /etc/openbao-backup 0750 root openbao-backup -

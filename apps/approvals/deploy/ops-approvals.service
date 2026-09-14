@@ -1,0 +1,24 @@
+[Unit]
+Description=Ops Autorisations — PWA
+After=network-online.target ops-approvals-export.service
+Requires=ops-approvals-export.service
+[Service]
+User=opsapprovals
+Group=opsapprovals
+WorkingDirectory=/opt/ops-approvals
+ExecStart=/opt/ops-approvals/venv/bin/uvicorn server:app --host 127.0.0.1 --port 9128 --no-access-log --no-proxy-headers
+StateDirectory=ops-approvals
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=256M
+LimitCORE=0
+[Install]
+WantedBy=multi-user.target

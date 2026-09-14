@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-manage-keyring"
+description = "Enables the manage_keyring command without any pre-configured scope."
+commands.allow = ["manage_keyring"]
+
+[[permission]]
+identifier = "deny-manage-keyring"
+description = "Denies the manage_keyring command without any pre-configured scope."
+commands.deny = ["manage_keyring"]

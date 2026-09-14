@@ -1,0 +1,42 @@
+[Unit]
+Description=Run the bounded Ollama benchmark once after NVIDIA 580xx is ready
+Documentation=file://%h/.local/share/ops-control-plane/post-reboot/docs/post-reboot-benchmark.md
+ConditionPathExists=!%h/.local/state/ops-control-plane/post-reboot/benchmark-v1.marker
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/libexec/ops-post-reboot-benchmark
+TimeoutStartSec=2h
+SuccessExitStatus=2
+UMask=0077
+LimitCORE=0
+MemoryMax=768M
+TasksMax=96
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+# modinfo must read /usr/lib/modules. ProtectSystem=strict keeps that tree
+# read-only and the service has neither capabilities nor privilege escalation.
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadWritePaths=%h/.local/state/ops-control-plane/post-reboot
+ReadWritePaths=%h/.local/share/ops-control-plane/post-reboot/benchmarks/results
+
+[Install]
+WantedBy=default.target

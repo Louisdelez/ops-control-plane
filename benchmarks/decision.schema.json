@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ops.local/schemas/ollama-decision-v1.json",
+  "title": "Decision bornee du routeur Ops",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "decision",
+    "confidence",
+    "reason_code",
+    "target",
+    "runbook_id",
+    "summary",
+    "evidence",
+    "parameters"
+  ],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": ["route", "execute", "refuse", "escalate"]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "reason_code": {
+      "type": "string",
+      "enum": [
+        "route_required",
+        "safe_read_only",
+        "runbook_match",
+        "approval_required",
+        "insufficient_confidence",
+        "scope_denied",
+        "secret_access_denied",
+        "no_runbook",
+        "budget_exhausted",
+        "invalid_input"
+      ]
+    },
+    "target": {
+      "type": ["string", "null"],
+      "enum": [
+        null,
+        "ops-coordinator",
+        "minecraft-ops",
+        "infra-shared",
+        "network-shared",
+        "monitoring-shared",
+        "backup-shared",
+        "security-ops"
+      ]
+    },
+    "runbook_id": {
+      "type": ["string", "null"],
+      "enum": [
+        null,
+        "local.health.v1",
+        "local.service-status.v1",
+        "local.restart-once.v1",
+        "minecraft.crash-triage.v1",
+        "shared.change-request.v1"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "maxProperties": 5,
+      "additionalProperties": {
+        "type": ["string", "number", "integer", "boolean", "null"]
+      }
+    }
+  }
+}

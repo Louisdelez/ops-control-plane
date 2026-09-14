@@ -1,0 +1,88 @@
+#!/usr/bin/bash -p
+set -Eeuo pipefail
+IFS=$'\n\t'
+umask 077
+
+if [[ $# -ne 1 ]]; then
+  echo "A single fixed Hermes profile is required." >&2
+  exit 64
+fi
+
+readonly profile=$1
+case "$profile" in
+  default)
+    actor_id=hermes-coordinator
+    target_user=hermesd
+    projects=minecraft,infra-shared,network-shared,monitoring-shared,backup-shared
+    ;;
+  minecraft-ops)
+    actor_id=minecraft-ops
+    target_user=minecraft-ops
+    projects=minecraft
+    ;;
+  infra-shared)
+    actor_id=infra-shared
+    target_user=infra-network
+    projects=infra-shared,network-shared
+    ;;
+  network-shared)
+    actor_id=network-shared
+    target_user=infra-network
+    projects=network-shared,infra-shared
+    ;;
+  monitoring-shared)
+    actor_id=monitoring-shared
+    target_user=ops-monitor
+    projects=minecraft,infra-shared,network-shared,monitoring-shared,backup-shared
+    ;;
+  backup-shared)
+    actor_id=backup-shared
+    target_user=backup-agent
+    projects=minecraft,infra-shared,backup-shared
+    ;;
+  deploy-ops)
+    actor_id=deploy-ops
+    target_user=deploy-agent
+    projects=minecraft,infra-shared
+    ;;
+  security-ops)
+    actor_id=security-ops
+    target_user=security-audit
+    projects=minecraft,infra-shared,network-shared,monitoring-shared,backup-shared
+    ;;
+  *)
+    echo "Hermes profile is not allowlisted." >&2
+    exit 77
+    ;;
+esac
+readonly actor_id target_user projects
+
+hermes_uid=""
+target_uid=""
+if ! hermes_uid=$(/usr/bin/id -u hermesd 2>/dev/null) \
+  || ! target_uid=$(/usr/bin/id -u "$target_user" 2>/dev/null); then
+  echo "A required service account is unavailable." >&2
+  exit 69
+fi
+readonly hermes_uid target_uid
+
+if [[ $EUID -eq $hermes_uid && $target_user != hermesd ]]; then
+  exec /usr/bin/sudo -n -u "$target_user" -g "$target_user" -- \
+    /usr/local/libexec/ops-orchestrator-mcp-profile "$profile"
+fi
+if [[ $EUID -ne $target_uid ]]; then
+  echo "This wrapper is restricted to the fixed Hermes service identity." >&2
+  exit 77
+fi
+
+exec /usr/bin/env -i \
+  PATH=/usr/sbin:/usr/bin \
+  HOME=/var/empty \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONNOUSERSITE=1 \
+  OPS_ORCHESTRATOR_SOCKET=/run/ops-orchestrator/api.sock \
+  OPS_ORCHESTRATOR_MCP_ACTOR_ID="$actor_id" \
+  OPS_ORCHESTRATOR_MCP_PROJECTS="$projects" \
+  /opt/ops-orchestrator/venv/bin/ops-orchestrator-mcp

@@ -1,0 +1,15 @@
+{
+  "identifier": "home",
+  "description": "Local tab bar only",
+  "webviews": [
+    "tabs"
+  ],
+  "local": true,
+  "permissions": [
+    "allow-open-service",
+    "allow-reload-service",
+    "allow-open-settings",
+    "allow-provider-tabs",
+    "allow-provider-browser"
+  ]
+}

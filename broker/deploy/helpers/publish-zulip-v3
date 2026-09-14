@@ -1,0 +1,19 @@
+#!/usr/bin/python3 -I
+"""Activate a hash-bound publication; the action does not claim deploy success."""
+from pathlib import Path
+import hashlib,json,os,subprocess,sys
+root=Path('/usr/local/libexec/ops-zulip-public-20260912-3')
+if os.geteuid()!=0 or len(sys.argv)!=2:raise SystemExit(2)
+raw=(root/'assets.json').read_bytes()
+if hashlib.sha256(raw).hexdigest()!=sys.argv[1]:raise SystemExit('Bundle differs from approved hash')
+for name,digest in json.loads(raw).items():
+ p=root/name
+ if p.is_symlink() or p.stat().st_uid!=0 or p.stat().st_mode&0o022 or hashlib.sha256(p.read_bytes()).hexdigest()!=digest:
+  raise SystemExit('Bundle integrity failed')
+state=Path('/var/lib/ops-zulip-public-v3');state.mkdir(mode=0o700,exist_ok=True)
+if (state/'state.json').exists() or (state/'activation.json').exists():raise SystemExit('Existing transaction requires review')
+with (state/'activation.json').open('x') as f:
+ json.dump({'bundle_sha256':sys.argv[1],'status':'authorized_activation'},f);f.flush();os.fsync(f.fileno())
+subprocess.run(['systemctl','enable','ops-zulip-publication-v3-recover.service'],check=True,capture_output=True)
+subprocess.run(['systemctl','start','--no-block','ops-zulip-publication-v3.service'],check=True,capture_output=True)
+print(json.dumps({'status':'publication_started','deployment_verified':False,'state':str(state/'state.json')}))

@@ -1,0 +1,10 @@
+[Unit]
+Description=Observe Ops readiness after startup and periodically
+
+[Timer]
+OnStartupSec=3min
+OnUnitActiveSec=10min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

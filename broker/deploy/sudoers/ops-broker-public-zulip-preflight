@@ -1,0 +1,1 @@
+opsbroker ALL=(root) NOPASSWD: /usr/local/libexec/ops-runbooks/public-zulip-preflight edge-vps, /usr/local/libexec/ops-runbooks/public-zulip-preflight nas, /usr/local/libexec/ops-runbooks/public-zulip-preflight prod

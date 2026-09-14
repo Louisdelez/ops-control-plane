@@ -1,0 +1,274 @@
+#!/usr/bin/python3
+"""Queue or inspect one fixed NVIDIA remediation through systemd."""
+
+from __future__ import annotations
+
+import contextlib
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+from typing import Iterator, Sequence
+
+
+ENSURE_OPERATION = "ensure-580xx"
+STATUS_OPERATION = "status"
+UNIT = "ops-nvidia-package-remediation.service"
+SYSTEMCTL = "/usr/bin/systemctl"
+RESULT_PATH = Path("/run/ops-nvidia-package-remediation/result.json")
+LOCK_PATH = Path("/run/lock/ops-nvidia-package-remediation-dispatch.lock")
+MAX_RESULT_BYTES = 8192
+MAX_SYSTEMCTL_OUTPUT_BYTES = 4096
+CONTROL_TIMEOUT_SECONDS = 5
+RESULT_OWNER_UID = 0
+ENVIRONMENT = {
+    "PATH": "/usr/sbin:/usr/bin",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+}
+EXPECTED_SUCCESS = {
+    "mok_enrolled": True,
+    "module_sig_key_matches": True,
+    "module_signer_matches": True,
+    "module_signed": True,
+    "operation": ENSURE_OPERATION,
+    "os": "fedora-44",
+    "packages_ready": True,
+    "pci_device": "10de:1c8d",
+    "secure_boot_enabled": True,
+    "status": "ready",
+}
+ALLOWED_ERRORS = frozenset(
+    {
+        "command_failed",
+        "command_timed_out",
+        "expected_gpu_not_found",
+        "kernel_release_invalid",
+        "module_build_failed",
+        "module_state_invalid",
+        "mok_not_enrolled",
+        "operation_not_allowed",
+        "os_release_invalid",
+        "os_release_unavailable",
+        "package_install_failed",
+        "package_remove_failed",
+        "package_state_invalid",
+        "postcondition_failed",
+        "required_command_missing",
+        "result_write_failed",
+        "root_required",
+        "secure_boot_not_enabled",
+        "signing_certificate_invalid",
+        "signing_trust_changed",
+        "unsupported_operating_system",
+    }
+)
+UNIT_VALUE = re.compile(r"^[a-z0-9_-]{1,64}$")
+RUNNING_ACTIVE_STATES = frozenset(
+    {"activating", "active", "reloading", "deactivating"}
+)
+
+
+class DispatchError(RuntimeError):
+    def __init__(self, code: str, status: int = 1) -> None:
+        super().__init__(code)
+        self.code = code
+        self.status = status
+
+
+def emit(payload: dict[str, object]) -> None:
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+
+def effective_uid() -> int:
+    return os.geteuid()
+
+
+@contextlib.contextmanager
+def operation_lock() -> Iterator[None]:
+    flags = os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(LOCK_PATH, flags, 0o600)
+    except OSError as exc:
+        raise DispatchError("lock_unavailable", 75) from exc
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise DispatchError("remediation_busy", 75) from exc
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def run_command(
+    argv: Sequence[str],
+    *,
+    timeout: int,
+    capture: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            list(argv),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=ENVIRONMENT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise DispatchError("unit_control_timed_out") from exc
+    except OSError as exc:
+        raise DispatchError("unit_control_failed") from exc
+
+
+def _unit_state() -> dict[str, str]:
+    completed = run_command(
+        (
+            SYSTEMCTL,
+            "show",
+            UNIT,
+            "--property=ActiveState",
+            "--property=SubState",
+            "--property=Result",
+            "--no-pager",
+        ),
+        timeout=CONTROL_TIMEOUT_SECONDS,
+        capture=True,
+    )
+    if completed.returncode != 0:
+        raise DispatchError("unit_status_failed")
+    if len(completed.stdout.encode("utf-8")) > MAX_SYSTEMCTL_OUTPUT_BYTES:
+        raise DispatchError("unit_status_invalid")
+    values: dict[str, str] = {}
+    for line in completed.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or key not in {"ActiveState", "SubState", "Result"}:
+            raise DispatchError("unit_status_invalid")
+        if key in values or not UNIT_VALUE.fullmatch(value):
+            raise DispatchError("unit_status_invalid")
+        values[key] = value
+    if set(values) != {"ActiveState", "SubState", "Result"}:
+        raise DispatchError("unit_status_invalid")
+    return values
+
+
+def _unit_is_running(state: dict[str, str]) -> bool:
+    return state["ActiveState"] in RUNNING_ACTIVE_STATES
+
+
+def _validated_result() -> dict[str, object]:
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(RESULT_PATH, flags)
+    except OSError as exc:
+        raise DispatchError("result_unavailable") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != RESULT_OWNER_UID
+            or metadata.st_size < 2
+            or metadata.st_size > MAX_RESULT_BYTES
+        ):
+            raise DispatchError("result_invalid")
+        raw = os.read(descriptor, MAX_RESULT_BYTES + 1)
+    finally:
+        os.close(descriptor)
+    if len(raw) > MAX_RESULT_BYTES:
+        raise DispatchError("result_invalid")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DispatchError("result_invalid") from exc
+    if not isinstance(payload, dict):
+        raise DispatchError("result_invalid")
+
+    if payload.get("status") == "ready":
+        if set(payload) != set(EXPECTED_SUCCESS) | {"changed", "reboot_required"}:
+            raise DispatchError("result_invalid")
+        if any(payload.get(key) != value for key, value in EXPECTED_SUCCESS.items()):
+            raise DispatchError("result_invalid")
+        if not isinstance(payload.get("changed"), bool) or not isinstance(
+            payload.get("reboot_required"), bool
+        ):
+            raise DispatchError("result_invalid")
+        return payload
+
+    if set(payload) != {"error", "operation"}:
+        raise DispatchError("result_invalid")
+    if (
+        payload.get("operation") != ENSURE_OPERATION
+        or payload.get("error") not in ALLOWED_ERRORS
+    ):
+        raise DispatchError("result_invalid")
+    return payload
+
+
+def queue_remediation() -> dict[str, object]:
+    """Clean a stopped unit's preserved runtime and queue exactly one fixed unit."""
+
+    with operation_lock():
+        if _unit_is_running(_unit_state()):
+            return {"operation": ENSURE_OPERATION, "status": "running", "unit": UNIT}
+
+        cleaned = run_command(
+            (SYSTEMCTL, "clean", "--what=runtime", UNIT),
+            timeout=CONTROL_TIMEOUT_SECONDS,
+        )
+        if cleaned.returncode != 0:
+            raise DispatchError("unit_clean_failed")
+
+        started = run_command(
+            (SYSTEMCTL, "--no-block", "start", UNIT),
+            timeout=CONTROL_TIMEOUT_SECONDS,
+        )
+        if started.returncode != 0:
+            raise DispatchError("unit_start_failed")
+    return {"operation": ENSURE_OPERATION, "status": "queued", "unit": UNIT}
+
+
+def remediation_status() -> tuple[int, dict[str, object]]:
+    if _unit_is_running(_unit_state()):
+        return 0, {"operation": STATUS_OPERATION, "status": "running", "unit": UNIT}
+    payload = _validated_result()
+    return (0 if payload.get("status") == "ready" else 1), payload
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or sys.argv[1] not in {ENSURE_OPERATION, STATUS_OPERATION}:
+        emit({"error": "operation_not_allowed"})
+        return 64
+    operation = sys.argv[1]
+    if effective_uid() != 0:
+        emit({"error": "root_required", "operation": operation})
+        return 77
+    if not Path(SYSTEMCTL).is_file() or not os.access(SYSTEMCTL, os.X_OK):
+        emit({"error": "systemctl_unavailable", "operation": operation})
+        return 69
+    try:
+        if operation == ENSURE_OPERATION:
+            payload = queue_remediation()
+            status = 0
+        else:
+            status, payload = remediation_status()
+        emit(payload)
+        return status
+    except DispatchError as exc:
+        emit({"error": exc.code, "operation": operation})
+        return exc.status
+    except OSError:
+        emit({"error": "dispatch_failed", "operation": operation})
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

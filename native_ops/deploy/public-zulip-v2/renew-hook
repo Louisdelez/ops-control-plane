@@ -1,0 +1,4 @@
+#!/bin/sh
+if [ "${RENEWED_LINEAGE:-}" = /etc/letsencrypt/live/ops-zulip-delez-ovh ]; then
+    /usr/sbin/nginx -t && /usr/bin/systemctl reload nginx
+fi

@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily deterministic ops-memory backup
+
+[Timer]
+OnCalendar=*-*-* 03:35:00
+RandomizedDelaySec=5min
+Persistent=true
+AccuracySec=1min
+Unit=ops-memory-backup.service
+
+[Install]
+WantedBy=timers.target

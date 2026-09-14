@@ -1,0 +1,45 @@
+[Unit]
+Description=Create a coherent verified backup of ops-broker SQLite state
+Documentation=file:///opt/ops-broker/README.md
+ConditionPathExists=/var/lib/ops-broker/state.db
+OnSuccess=ops-broker-backup-metric-success.service
+OnFailure=ops-broker-backup-metric-failure.service
+
+[Service]
+Type=oneshot
+User=opsbroker
+Group=opsbroker
+WorkingDirectory=/var/lib/ops-broker
+ExecStart=/opt/ops-broker/venv/bin/ops-broker-backup --database /var/lib/ops-broker/state.db --destination /var/backups/ops-broker --retain 14
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+RemoveIPC=yes
+KeyringMode=private
+# SQLite's online backup opens the source mode=ro, but WAL snapshot access may
+# still need its -shm coordination file in the source directory.
+ReadWritePaths=/var/lib/ops-broker /var/backups/ops-broker
+InaccessiblePaths=-/var/lib/hermes -/var/lib/zulip-bridge
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=15min

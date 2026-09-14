@@ -1,0 +1,33 @@
+[Unit]
+Description=Qdrant vector index for Ops memory
+Documentation=https://qdrant.tech/documentation/
+After=network-online.target ops-memory-secrets.service
+Wants=network-online.target
+Requires=ops-memory-secrets.service
+Before=ops-memory.service
+ConditionPathExists=/etc/ops-memory/qdrant.yaml
+ConditionPathExists=/etc/ops-memory/qdrant.env
+StartLimitIntervalSec=5min
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=all
+EnvironmentFile=/etc/ops-memory/qdrant.env
+RuntimeDirectory=ops-memory-qdrant
+RuntimeDirectoryMode=0700
+LoadCredential=qdrant-api-key:/run/ops-memory-secrets/qdrant-api-key
+ExecStartPre=/opt/ops-memory/bin/ops-memory-openbao-preflight
+ExecStartPre=/opt/ops-memory/bin/ops-memory-qdrant-render-config --template /etc/ops-memory/qdrant.yaml --output /run/ops-memory-qdrant/production.yaml
+ExecStartPre=-/usr/bin/podman rm --force ops-memory-qdrant
+ExecStart=/opt/ops-memory/bin/ops-memory-qdrant-launcher
+ExecStop=-/usr/bin/podman stop --time 15 ops-memory-qdrant
+ExecStopPost=-/usr/bin/podman rm --force ops-memory-qdrant
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=90s
+TimeoutStopSec=30s
+OOMScoreAdjust=200
+
+[Install]
+WantedBy=multi-user.target

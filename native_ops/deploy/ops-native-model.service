@@ -1,0 +1,36 @@
+[Unit]
+Description=Mission budget facade for native Hermes API requests
+Requires=ops-native-secrets.service
+After=ops-native-secrets.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=opsnativeai
+Group=opsnativeai
+ExecStart=/opt/ops-native/venv/bin/ops-native-model-proxy
+LoadCredentialEncrypted=ops-native-facade-token:/etc/credstore.encrypted/ops-native-facade-token
+Environment=OPS_ORCHESTRATOR_ENABLE_QWEN=0
+Environment=OPS_ORCHESTRATOR_ENABLE_DEEPSEEK=1
+Environment=QWEN_API_KEY_FILE=/run/ops-native-model/qwen
+Environment=DEEPSEEK_API_KEY_FILE=/run/ops-native-model/deepseek
+Environment=PYTHONDONTWRITEBYTECODE=1
+StateDirectory=ops-native-model
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=15
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+LimitCORE=0
+ReadWritePaths=/run/ops-native-model /var/lib/ops-native-model
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

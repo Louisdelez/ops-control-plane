@@ -1,0 +1,43 @@
+[Unit]
+Description=Native Hermes and Zulip supervised operations
+After=network-online.target docker.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+User=hermesd
+Group=hermesd
+Type=simple
+WorkingDirectory=/var/lib/hermes/native-ops
+ExecStart=/opt/ops-native/venv/bin/ops-native --config /run/credentials/ops-native.service/config.json
+LoadCredential=config.json:/etc/ops-native/config.json
+LoadCredential=zulip.json:/etc/ops-native/zulip.json
+Environment=HERMES_HOME=/var/lib/hermes/native-ops/hermes
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=SSL_CERT_FILE=/etc/pki/tls/certs/ca-bundle.crt
+UMask=0077
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=15
+KillMode=control-group
+MemoryHigh=800M
+MemoryMax=1500M
+TasksMax=128
+LimitCORE=0
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/hermes/native-ops /var/lib/ops-broker
+ReadOnlyPaths=/var/lib/hermes/hermes-agent
+# Fixed broker wrappers enforce project RBAC, budgets and separate class C approval.
+NoNewPrivileges=no
+
+[Install]
+WantedBy=multi-user.target

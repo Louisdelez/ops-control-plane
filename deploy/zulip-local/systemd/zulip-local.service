@@ -1,0 +1,42 @@
+[Unit]
+Description=Local-only Zulip 12.2 Compose stack
+Documentation=file:/opt/ops-control-plane/deploy/zulip-local/README.md
+Wants=network-online.target
+After=network-online.target docker.service zulip-local-secrets.service
+Requires=docker.service zulip-local-secrets.service
+BindsTo=zulip-local-secrets.service
+ConditionPathExists=/opt/ops-control-plane/deploy/zulip-local/compose.yaml
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/opt/ops-control-plane/deploy/zulip-local
+ExecStart=/opt/ops-control-plane/deploy/zulip-local/bin/service.sh start
+# ExecStopPost also runs after a failed/timed-out ExecStart, so partially
+# started containers are never left outside systemd's declared state.
+ExecStopPost=/opt/ops-control-plane/deploy/zulip-local/bin/service.sh stop
+RemainAfterExit=yes
+TimeoutStartSec=20min
+TimeoutStopSec=5min
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service @mount
+SystemCallErrorNumber=EPERM
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+out_dir=/var/lib/node-exporter/textfile
+tmp_file=$(mktemp "$out_dir/.ops.prom.XXXXXX")
+trap 'rm -f -- "$tmp_file"' EXIT
+
+metric_bool() {
+  local metric=$1
+  shift
+  if "$@" >/dev/null 2>&1; then
+    printf '%s 1\n' "$metric"
+  else
+    printf '%s 0\n' "$metric"
+  fi
+}
+
+mok_subject_has_signer() {
+  local signer=$1
+  awk -v expected="CN=${signer}" '
+    /^[[:space:]]*Subject:/ {
+      subject = $0
+      sub(/^[[:space:]]*Subject:[[:space:]]*/, "", subject)
+      count = split(subject, attributes, ",")
+      for (i = 1; i <= count; i++) {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", attributes[i])
+        if (attributes[i] == expected) found = 1
+      }
+    }
+    END { exit found ? 0 : 1 }
+  '
+}
+
+{
+  echo '# HELP ops_service_up Whether a required local service is active.'
+  echo '# TYPE ops_service_up gauge'
+  for service in openbao ollama node-exporter prometheus prometheus-alertmanager ops-broker; do
+    value=0
+    if [[ $service == ops-broker ]]; then
+      # The network/API daemon is deliberately disabled until Zulip is
+      # provisioned.  The broker is nevertheless operational through its
+      # fixed-identity MCP wrapper when its audit verifier and backup timer are
+      # healthy, so monitor that production mode instead of a dormant daemon.
+      if [[ -x /usr/local/libexec/ops-broker/ops-broker-mcp-codex ]] \
+        && [[ -f /var/lib/ops-broker/state.db ]] \
+        && systemctl is-active --quiet ops-broker-audit-verify.timer \
+        && systemctl is-active --quiet ops-broker-backup.timer \
+        && [[ $(systemctl show -p Result --value ops-broker-audit-verify.service) == success ]]; then
+        value=1
+      fi
+    elif systemctl is-active --quiet "$service.service"; then
+      value=1
+    fi
+    printf 'ops_service_up{service="%s"} %d\n' "$service" "$value"
+  done
+
+  echo '# HELP ops_openbao_initialized Whether OpenBao has been initialized.'
+  echo '# TYPE ops_openbao_initialized gauge'
+  echo '# HELP ops_openbao_sealed Whether OpenBao is currently sealed.'
+  echo '# TYPE ops_openbao_sealed gauge'
+  health=$(curl -sS --max-time 3 \
+    --cacert /etc/pki/ca-trust/source/anchors/openbao-local.crt \
+    https://127.0.0.1:8200/v1/sys/health 2>/dev/null || true)
+  initialized=$(jq -r 'if .initialized == true then 1 else 0 end' <<<"$health" 2>/dev/null || echo 0)
+  sealed=$(jq -r 'if .sealed == true then 1 else 0 end' <<<"$health" 2>/dev/null || echo 1)
+  printf 'ops_openbao_initialized %s\n' "$initialized"
+  printf 'ops_openbao_sealed %s\n' "$sealed"
+
+  echo '# HELP ops_reboot_required Whether the running kernel differs from the newest installed kernel.'
+  echo '# TYPE ops_reboot_required gauge'
+  running=$(uname -r)
+  newest=$(rpm -q kernel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' | sort -V | tail -n1)
+  reboot=0
+  [[ $running == "$newest" ]] || reboot=1
+  printf 'ops_reboot_required %d\n' "$reboot"
+
+  battery_full_file=""
+  battery_design_file=""
+  if [[ -r /sys/class/power_supply/BAT0/energy_full && -r /sys/class/power_supply/BAT0/energy_full_design ]]; then
+    battery_full_file=/sys/class/power_supply/BAT0/energy_full
+    battery_design_file=/sys/class/power_supply/BAT0/energy_full_design
+  elif [[ -r /sys/class/power_supply/BAT0/charge_full && -r /sys/class/power_supply/BAT0/charge_full_design ]]; then
+    battery_full_file=/sys/class/power_supply/BAT0/charge_full
+    battery_design_file=/sys/class/power_supply/BAT0/charge_full_design
+  fi
+  if [[ -n $battery_full_file ]]; then
+    full=$(< "$battery_full_file")
+    design=$(< "$battery_design_file")
+    awk -v full="$full" -v design="$design" \
+      'BEGIN { print "# HELP ops_battery_health_ratio Current full capacity divided by design capacity."; print "# TYPE ops_battery_health_ratio gauge"; if (design > 0) printf "ops_battery_health_ratio %.6f\n", full/design }'
+  fi
+
+  echo '# HELP ops_nvme_smart_healthy Whether SMART reports the local NVMe as healthy.'
+  echo '# TYPE ops_nvme_smart_healthy gauge'
+  smart_json=$(smartctl -H -A -j /dev/nvme0n1 2>/dev/null || true)
+  smart_healthy=$(jq -r 'if .smart_status.passed == true then 1 else 0 end' <<<"$smart_json" 2>/dev/null || echo 0)
+  printf 'ops_nvme_smart_healthy %s\n' "$smart_healthy"
+  nvme_temp=$(jq -r '.temperature.current // empty' <<<"$smart_json" 2>/dev/null || true)
+  if [[ $nvme_temp =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    echo '# HELP ops_nvme_temperature_celsius Current NVMe temperature.'
+    echo '# TYPE ops_nvme_temperature_celsius gauge'
+    printf 'ops_nvme_temperature_celsius %s\n' "$nvme_temp"
+  fi
+
+  echo '# HELP ops_nvidia_mok_enrolled Whether the installed NVIDIA signer CN matches an enrolled MOK.'
+  echo '# TYPE ops_nvidia_mok_enrolled gauge'
+  mok_enrolled=0
+  # Match the signer CN embedded in the installed module against an enrolled
+  # MOK subject CN. This remains usable in the hardened metrics unit, where
+  # reading the akmods certificate path may be denied by the service sandbox.
+  nvidia_signer=$(modinfo -F signer nvidia 2>/dev/null || true)
+  enrolled_moks=$(mokutil --list-enrolled 2>/dev/null || true)
+  if [[ -n $nvidia_signer ]] \
+    && mok_subject_has_signer "$nvidia_signer" <<<"$enrolled_moks"; then
+    mok_enrolled=1
+  fi
+  printf 'ops_nvidia_mok_enrolled %d\n' "$mok_enrolled"
+
+  echo '# HELP ops_secure_boot_enabled Whether UEFI Secure Boot is enabled.'
+  echo '# TYPE ops_secure_boot_enabled gauge'
+  secure_boot=0
+  mokutil --sb-state 2>/dev/null | grep -Fqi 'SecureBoot enabled' && secure_boot=1
+  printf 'ops_secure_boot_enabled %d\n' "$secure_boot"
+
+  echo '# HELP ops_root_filesystem_encrypted Whether the root block-device chain includes dm-crypt.'
+  echo '# TYPE ops_root_filesystem_encrypted gauge'
+  root_encrypted=0
+  root_source=$(findmnt -n -o SOURCE -T / 2>/dev/null || true)
+  root_source=${root_source%%\[*}
+  if [[ $root_source == /dev/* ]] && lsblk -sno TYPE "$root_source" 2>/dev/null | grep -Fxq crypt; then
+    root_encrypted=1
+  fi
+  printf 'ops_root_filesystem_encrypted %d\n' "$root_encrypted"
+
+  echo '# HELP ops_hermes_activation_requested Whether the Hermes activation marker is installed.'
+  echo '# TYPE ops_hermes_activation_requested gauge'
+  hermes_activation=0
+  [[ -f /etc/hermes/hermes-gateway.enabled && ! -L /etc/hermes/hermes-gateway.enabled ]] \
+    && hermes_activation=1
+  printf 'ops_hermes_activation_requested %d\n' "$hermes_activation"
+
+  echo '# HELP ops_hermes_openbao_credential_present Whether the encrypted Hermes AppRole SecretID exists safely.'
+  echo '# TYPE ops_hermes_openbao_credential_present gauge'
+  hermes_credential=/etc/credstore.encrypted/hermes-openbao-secret-id
+  hermes_credential_present=0
+  if [[ -f $hermes_credential && ! -L $hermes_credential ]]; then
+    credential_stat=$(stat -Lc '%u %a %Y' -- "$hermes_credential" 2>/dev/null || true)
+    credential_owner=$(awk '{print $1}' <<<"$credential_stat")
+    credential_mode=$(awk '{print $2}' <<<"$credential_stat")
+    credential_mtime=$(awk '{print $3}' <<<"$credential_stat")
+    if [[ $credential_owner == 0 && $credential_mode =~ ^[0-7]+$ ]] \
+      && (( (8#$credential_mode & 077) == 0 )) \
+      && [[ $credential_mtime =~ ^[0-9]+$ ]]; then
+      hermes_credential_present=1
+      credential_age=$(( $(date +%s) - credential_mtime ))
+      (( credential_age < 0 )) && credential_age=0
+      echo '# HELP ops_hermes_openbao_secret_id_age_seconds Age of the encrypted Hermes AppRole SecretID.'
+      echo '# TYPE ops_hermes_openbao_secret_id_age_seconds gauge'
+      printf 'ops_hermes_openbao_secret_id_age_seconds %d\n' "$credential_age"
+    fi
+  fi
+  printf 'ops_hermes_openbao_credential_present %d\n' "$hermes_credential_present"
+
+  echo '# HELP ops_zulip_bridge_activation_requested Whether the Zulip bridge is enabled.'
+  echo '# TYPE ops_zulip_bridge_activation_requested gauge'
+  zulip_activation=0
+  systemctl is-enabled --quiet zulip-approval-bridge.service 2>/dev/null \
+    && zulip_activation=1
+  printf 'ops_zulip_bridge_activation_requested %d\n' "$zulip_activation"
+
+  echo '# HELP ops_zulip_openbao_credential_present Whether the encrypted Zulip AppRole SecretID exists safely.'
+  echo '# TYPE ops_zulip_openbao_credential_present gauge'
+  zulip_credential=/etc/credstore.encrypted/zulip-openbao-secret-id
+  zulip_credential_present=0
+  if [[ -f $zulip_credential && ! -L $zulip_credential ]]; then
+    credential_stat=$(stat -Lc '%u %a %Y' -- "$zulip_credential" 2>/dev/null || true)
+    credential_owner=$(awk '{print $1}' <<<"$credential_stat")
+    credential_mode=$(awk '{print $2}' <<<"$credential_stat")
+    credential_mtime=$(awk '{print $3}' <<<"$credential_stat")
+    if [[ $credential_owner == 0 && $credential_mode =~ ^[0-7]+$ ]] \
+      && (( (8#$credential_mode & 077) == 0 )) \
+      && [[ $credential_mtime =~ ^[0-9]+$ ]]; then
+      zulip_credential_present=1
+      credential_age=$(( $(date +%s) - credential_mtime ))
+      (( credential_age < 0 )) && credential_age=0
+      echo '# HELP ops_zulip_openbao_secret_id_age_seconds Age of the encrypted Zulip AppRole SecretID.'
+      echo '# TYPE ops_zulip_openbao_secret_id_age_seconds gauge'
+      printf 'ops_zulip_openbao_secret_id_age_seconds %d\n' "$credential_age"
+    fi
+  fi
+  printf 'ops_zulip_openbao_credential_present %d\n' "$zulip_credential_present"
+
+  echo '# HELP ops_openbao_tls_not_after_timestamp_seconds OpenBao server certificate expiry as Unix time.'
+  echo '# TYPE ops_openbao_tls_not_after_timestamp_seconds gauge'
+  if [[ -r /etc/openbao.d/tls/server.crt ]]; then
+    tls_end=$(openssl x509 -in /etc/openbao.d/tls/server.crt -noout -enddate 2>/dev/null || true)
+    tls_end=${tls_end#notAfter=}
+    tls_epoch=$(date --date="$tls_end" +%s 2>/dev/null || true)
+    if [[ $tls_epoch =~ ^[0-9]+$ ]]; then
+      printf 'ops_openbao_tls_not_after_timestamp_seconds %s\n' "$tls_epoch"
+    fi
+  fi
+
+  echo '# HELP ops_audit_active Whether Linux Audit is enabled without a task-never suppression rule.'
+  echo '# TYPE ops_audit_active gauge'
+  echo '# HELP ops_audit_lost_events Number of events reported lost by Linux Audit.'
+  echo '# TYPE ops_audit_lost_events gauge'
+  audit_active=0
+  audit_lost=0
+  audit_status=$(auditctl -s 2>/dev/null || true)
+  audit_enabled=$(awk '$1 == "enabled" { print $2; exit }' <<<"$audit_status")
+  audit_lost_value=$(awk '$1 == "lost" { print $2; exit }' <<<"$audit_status")
+  [[ $audit_lost_value =~ ^[0-9]+$ ]] && audit_lost=$audit_lost_value
+  if [[ $audit_enabled =~ ^[12]$ ]] && ! auditctl -l 2>/dev/null | grep -Eq '(^|,)never,task|task,never'; then
+    audit_active=1
+  fi
+  printf 'ops_audit_active %d\n' "$audit_active"
+  printf 'ops_audit_lost_events %d\n' "$audit_lost"
+
+  echo '# HELP ops_v1_enabled_checks Number of explicitly enabled deterministic Ops V1 checks.'
+  echo '# TYPE ops_v1_enabled_checks gauge'
+  echo '# HELP ops_v1_observation_enabled Whether the deterministic observation timer is enabled.'
+  echo '# TYPE ops_v1_observation_enabled gauge'
+  echo '# HELP ops_v1_check_result_valid Whether the latest check result is a valid bounded V1 document.'
+  echo '# TYPE ops_v1_check_result_valid gauge'
+  echo '# HELP ops_v1_check_failures Number of failed or errored checks in the latest bounded run.'
+  echo '# TYPE ops_v1_check_failures gauge'
+  echo '# HELP ops_v1_check_result_timestamp_seconds Filesystem timestamp of the latest check result.'
+  echo '# TYPE ops_v1_check_result_timestamp_seconds gauge'
+  ops_v1_checks=/var/lib/ops-v1/checks/latest.json
+  ops_v1_observation_enabled=0
+  systemctl is-enabled --quiet ops-v1-observe.timer 2>/dev/null && ops_v1_observation_enabled=1
+  ops_v1_valid=0
+  ops_v1_enabled=0
+  ops_v1_failures=0
+  if [[ -f $ops_v1_checks && ! -L $ops_v1_checks ]]; then
+    ops_v1_stat=$(stat -Lc '%Y %s' -- "$ops_v1_checks" 2>/dev/null || true)
+    ops_v1_mtime=$(awk '{print $1}' <<<"$ops_v1_stat")
+    ops_v1_size=$(awk '{print $2}' <<<"$ops_v1_stat")
+    if [[ $ops_v1_mtime =~ ^[0-9]+$ && $ops_v1_size =~ ^[0-9]+$ ]] && (( ops_v1_size <= 2097152 )); then
+      if jq -e '.schema_version == 1 and .phase == "observation" and (.enabled_count | type) == "number" and .enabled_count >= 0 and (.results | type) == "array" and all(.results[]; (.status == "ok" or .status == "failed" or .status == "error" or .status == "skipped"))' "$ops_v1_checks" >/dev/null 2>&1; then
+        ops_v1_valid=1
+      fi
+      ops_v1_enabled=$(jq -r 'if .schema_version == 1 and (.enabled_count | type) == "number" then .enabled_count else 0 end' "$ops_v1_checks" 2>/dev/null || echo 0)
+      ops_v1_failures=$(jq -r 'if .schema_version == 1 and (.results | type) == "array" then [.results[] | select(.status == "failed" or .status == "error")] | length else 0 end' "$ops_v1_checks" 2>/dev/null || echo 0)
+      [[ $ops_v1_enabled =~ ^[0-9]+$ ]] || ops_v1_enabled=0
+      [[ $ops_v1_failures =~ ^[0-9]+$ ]] || ops_v1_failures=0
+      printf 'ops_v1_check_result_timestamp_seconds %s\n' "$ops_v1_mtime"
+    fi
+  fi
+  printf 'ops_v1_observation_enabled %d\n' "$ops_v1_observation_enabled"
+  printf 'ops_v1_check_result_valid %d\n' "$ops_v1_valid"
+  printf 'ops_v1_enabled_checks %d\n' "$ops_v1_enabled"
+  printf 'ops_v1_check_failures %d\n' "$ops_v1_failures"
+
+  echo '# HELP ops_thermal_guard_tripped Whether the thermal guard stopped Ollama since boot.'
+  echo '# TYPE ops_thermal_guard_tripped gauge'
+  thermal_tripped=0
+  [[ -e /run/ops-thermal-guard/tripped ]] && thermal_tripped=1
+  printf 'ops_thermal_guard_tripped %d\n' "$thermal_tripped"
+} >"$tmp_file"
+
+chown root:node-exporter "$tmp_file"
+chmod 0640 "$tmp_file"
+mv -f "$tmp_file" "$out_dir/ops.prom"
+trap - EXIT

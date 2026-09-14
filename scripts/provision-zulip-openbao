@@ -1,0 +1,611 @@
+#!/usr/bin/python3
+"""Interactively provision the dormant Zulip bridge AppRole credentials.
+
+This post-bootstrap operator tool never initializes or unseals OpenBao, never
+creates the Zulip bot secret, never prints credential material and never
+starts or enables a service.  Plaintext AppRole values exist only in this
+process and pipes to systemd-creds; persisted values use host+TPM2 encryption.
+"""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import ssl
+import stat
+import subprocess
+import sys
+import tempfile
+from types import ModuleType
+from typing import Any
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+BAO_ORIGIN = "https://127.0.0.1:8200"
+BAO_CA = "/etc/openbao.d/tls/ca.crt"
+KV_PATH = "/v1/kv-infra-shared/data/zulip/bot"
+ROLE_NAME = "zulip-bridge"
+SERVICE_NAME = "zulip-approval-bridge.service"
+LAUNCHER = Path("/usr/local/libexec/zulip-openbao-launcher")
+CREDSTORE = Path("/etc/credstore.encrypted")
+CREDENTIAL_NAMES = (
+    "zulip-openbao-role-id",
+    "zulip-openbao-secret-id",
+    "zulip-openbao-secret-id-accessor",
+)
+MAX_RESPONSE_BYTES = 64 * 1024
+MAX_CREDENTIAL_BYTES = 256
+HTTP_TIMEOUT_SECONDS = 3.0
+
+_IDENTIFIER_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{15,127}\Z")
+_TOKEN_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._~-]{15,511}\Z")
+
+
+class ProvisioningError(RuntimeError):
+    pass
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Provision the dormant Zulip bridge AppRole without exposing credentials."
+    )
+    parser.add_argument("--password-fd", type=int, help=argparse.SUPPRESS)
+    return parser.parse_args()
+
+
+def _password_from_pipe(descriptor: int) -> str:
+    if descriptor < 3 or descriptor > 1024:
+        raise ProvisioningError("The inherited password descriptor is invalid.")
+    try:
+        info = os.fstat(descriptor)
+        target = os.readlink(f"/proc/self/fd/{descriptor}")
+        if not stat.S_ISFIFO(info.st_mode) or not re.fullmatch(r"pipe:\[\d+\]", target):
+            raise ProvisioningError("The inherited password descriptor is not a pipe.")
+        chunks: list[bytes] = []
+        remaining = 4097
+        while remaining > 0:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+    except OSError as exc:
+        raise ProvisioningError("The inherited password pipe is unavailable.") from exc
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+    if not raw or len(raw) > 4096:
+        raise ProvisioningError("The inherited password is invalid.")
+    try:
+        password = raw.decode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise ProvisioningError("The inherited password is invalid.") from exc
+    raw = b""
+    if (
+        len(password) < 10
+        or len(password) > 256
+        or password != password.strip()
+        or any(ord(character) < 32 or ord(character) == 127 for character in password)
+    ):
+        password = ""
+        raise ProvisioningError("The inherited password is invalid.")
+    return password
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(  # type: ignore[override]
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        raise ProvisioningError("OpenBao refused a local request.")
+
+
+def _validated(value: Any, pattern: re.Pattern[str]) -> str:
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        raise ProvisioningError("OpenBao returned an invalid credential format.")
+    return value
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    context = ssl.create_default_context(cafile=BAO_CA)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+        urllib.request.HTTPSHandler(context=context),
+    )
+
+
+def _request(
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    token: str | None = None,
+    expect_json: bool = True,
+) -> dict[str, Any] | None:
+    if method not in {"GET", "POST"} or not path.startswith("/v1/"):
+        raise ProvisioningError("Internal OpenBao request rejected.")
+    headers = {"Accept": "application/json", "User-Agent": "provision-zulip-openbao/1"}
+    body = None
+    if payload is not None or method == "POST":
+        body = json.dumps(payload or {}, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if token is not None:
+        headers["X-Vault-Token"] = _validated(token, _TOKEN_RE)
+    request = urllib.request.Request(
+        BAO_ORIGIN + path, data=body, headers=headers, method=method
+    )
+    try:
+        with _opener().open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            if response.status not in ({200} if expect_json else {200, 204}):
+                raise ProvisioningError("OpenBao rejected the operation.")
+            response_body = response.read(MAX_RESPONSE_BYTES + 1)
+    except (OSError, ssl.SSLError, urllib.error.URLError) as exc:
+        raise ProvisioningError("The local OpenBao request failed.") from exc
+    if len(response_body) > MAX_RESPONSE_BYTES:
+        raise ProvisioningError("OpenBao returned an oversized response.")
+    if not expect_json:
+        return None
+    try:
+        decoded = json.loads(response_body)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ProvisioningError("OpenBao returned invalid JSON.") from exc
+    if not isinstance(decoded, dict):
+        raise ProvisioningError("OpenBao returned an invalid response.")
+    return decoded
+
+
+def _data(document: dict[str, Any]) -> dict[str, Any]:
+    value = document.get("data")
+    if not isinstance(value, dict):
+        raise ProvisioningError("OpenBao response data is missing.")
+    return value
+
+
+def _validate_role(document: dict[str, Any]) -> None:
+    role = _data(document)
+    policies = role.get("token_policies")
+    if not isinstance(policies, list) or set(policies) != {"zulip-bridge"}:
+        raise ProvisioningError("The zulip-bridge AppRole policies are not exact.")
+    exact_values = {
+        "bind_secret_id": True,
+        "token_no_default_policy": True,
+        "secret_id_num_uses": 1024,
+        "token_num_uses": 2,
+        "token_period": 0,
+        "token_type": "service",
+    }
+    for field, expected in exact_values.items():
+        if role.get(field) != expected:
+            raise ProvisioningError(f"The zulip-bridge AppRole field {field} is unsafe.")
+    # OpenBao canonicalizes a token /32 to its host address. Accept only
+    # those two equivalent spellings; broader networks remain forbidden.
+    for field in ("secret_id_bound_cidrs", "token_bound_cidrs"):
+        if role.get(field) not in (["127.0.0.1/32"], ["127.0.0.1"]):
+            raise ProvisioningError(f"The zulip-bridge AppRole field {field} is unsafe.")
+    exact_durations = {
+        "secret_id_ttl": 2_592_000,
+        "token_ttl": 60,
+        "token_max_ttl": 120,
+        "token_explicit_max_ttl": 120,
+    }
+    for field, expected in exact_durations.items():
+        value = role.get(field)
+        if isinstance(value, bool) or value != expected:
+            raise ProvisioningError(f"The zulip-bridge AppRole field {field} is unsafe.")
+
+
+def _validate_root_owned_regular(path: Path, description: str) -> None:
+    try:
+        path_stat = os.lstat(path)
+    except OSError as exc:
+        raise ProvisioningError(f"The {description} is unavailable.") from exc
+    if (
+        not stat.S_ISREG(path_stat.st_mode)
+        or path_stat.st_uid != 0
+        or stat.S_IMODE(path_stat.st_mode) & 0o022
+    ):
+        raise ProvisioningError(f"The {description} has unsafe ownership or mode.")
+
+
+def _load_launcher() -> ModuleType:
+    _validate_root_owned_regular(LAUNCHER, "installed Zulip OpenBao launcher")
+    loader = importlib.machinery.SourceFileLoader("zulip_openbao_launcher", str(LAUNCHER))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    if spec is None:
+        raise ProvisioningError("The Zulip OpenBao launcher cannot be loaded.")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        loader.exec_module(module)
+    except BaseException as exc:
+        raise ProvisioningError("The Zulip OpenBao launcher cannot be loaded.") from exc
+    if not callable(getattr(module, "validate_secret_data", None)):
+        raise ProvisioningError("The Zulip OpenBao launcher validator is unavailable.")
+    return module
+
+
+def _validate_secret_document(document: dict[str, Any], launcher: ModuleType) -> None:
+    outer = _data(document)
+    inner = outer.get("data")
+    if not isinstance(inner, dict):
+        raise ProvisioningError("The required Zulip KV object is missing.")
+    try:
+        environment = launcher.validate_secret_data(inner)
+    except BaseException as exc:
+        raise ProvisioningError("The Zulip KV object does not match the reviewed schema.") from exc
+    if not isinstance(environment, dict) or not environment:
+        raise ProvisioningError("The Zulip KV object produced no validated configuration.")
+    environment.clear()
+
+
+def _credential_paths() -> tuple[Path, ...]:
+    return tuple(CREDSTORE / name for name in CREDENTIAL_NAMES)
+
+
+def _prepare_credstore() -> None:
+    try:
+        CREDSTORE.mkdir(mode=0o700, parents=True, exist_ok=True)
+        store_stat = os.lstat(CREDSTORE)
+    except OSError as exc:
+        raise ProvisioningError("The encrypted credential store is unavailable.") from exc
+    if (
+        not stat.S_ISDIR(store_stat.st_mode)
+        or store_stat.st_uid != 0
+        or stat.S_IMODE(store_stat.st_mode) & 0o022
+    ):
+        raise ProvisioningError("The encrypted credential store has unsafe ownership or mode.")
+    os.chmod(CREDSTORE, 0o700)
+
+
+def _validate_existing_credential(path: Path) -> None:
+    try:
+        path_stat = os.lstat(path)
+    except OSError as exc:
+        raise ProvisioningError("An existing Zulip credential is inaccessible.") from exc
+    if (
+        not stat.S_ISREG(path_stat.st_mode)
+        or path_stat.st_uid != 0
+        or stat.S_IMODE(path_stat.st_mode) & 0o077
+    ):
+        raise ProvisioningError("An existing Zulip credential has unsafe ownership or mode.")
+
+
+def _decrypt_accessor(path: Path) -> str:
+    completed = subprocess.run(
+        [
+            "/usr/bin/systemd-creds",
+            "decrypt",
+            f"--name={CREDENTIAL_NAMES[2]}",
+            str(path),
+            "-",
+        ],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0 or len(completed.stdout) > MAX_CREDENTIAL_BYTES:
+        raise ProvisioningError("The previous SecretID accessor cannot be decrypted.")
+    try:
+        value = completed.stdout.rstrip(b"\r\n").decode("ascii", errors="strict")
+    except UnicodeError as exc:
+        raise ProvisioningError("The previous SecretID accessor is invalid.") from exc
+    return _validated(value, _IDENTIFIER_RE)
+
+
+def _encrypt_credential(name: str, value: str, output: Path) -> None:
+    completed = subprocess.run(
+        [
+            "/usr/bin/systemd-creds",
+            "encrypt",
+            "--with-key=host+tpm2",
+            f"--name={name}",
+            "-",
+            str(output),
+        ],
+        check=False,
+        input=(value + "\n").encode("ascii"),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0:
+        raise ProvisioningError("systemd-creds could not encrypt an AppRole credential.")
+    output_stat = os.lstat(output)
+    if not stat.S_ISREG(output_stat.st_mode) or output_stat.st_uid != 0:
+        raise ProvisioningError("An encrypted credential has unsafe ownership.")
+    os.chmod(output, 0o600)
+
+
+def _remove_runtime_credentials() -> None:
+    for path in _credential_paths():
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+    directory_fd = os.open(CREDSTORE, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _destroy_accessor(token: str, accessor: str) -> None:
+    _request(
+        "POST",
+        f"/v1/auth/approle/role/{ROLE_NAME}/secret-id-accessor/destroy",
+        payload={"secret_id_accessor": _validated(accessor, _IDENTIFIER_RE)},
+        token=token,
+        expect_json=False,
+    )
+
+
+def _test_runtime_credentials(
+    role_id: str, secret_id: str, launcher: ModuleType
+) -> None:
+    runtime_token: str | None = None
+    operation_error: BaseException | None = None
+    revocation_error: BaseException | None = None
+    secret_document: dict[str, Any] | None = None
+    try:
+        login = _request(
+            "POST",
+            "/v1/auth/approle/login",
+            payload={
+                "role_id": _validated(role_id, _IDENTIFIER_RE),
+                "secret_id": _validated(secret_id, _IDENTIFIER_RE),
+            },
+        )
+        if not isinstance(login, dict) or not isinstance(login.get("auth"), dict):
+            raise ProvisioningError("The issued Zulip AppRole login failed.")
+        runtime_token = _validated(login["auth"].get("client_token"), _TOKEN_RE)
+        secret_document = _request("GET", KV_PATH, token=runtime_token)
+        if not isinstance(secret_document, dict):
+            raise ProvisioningError("The issued Zulip AppRole cannot read its secret.")
+        _validate_secret_document(secret_document, launcher)
+    except BaseException as exc:
+        operation_error = exc
+    finally:
+        if runtime_token is not None:
+            try:
+                _request(
+                    "POST",
+                    "/v1/auth/token/revoke-self",
+                    token=runtime_token,
+                    expect_json=False,
+                )
+            except BaseException as exc:
+                revocation_error = exc
+            runtime_token = None
+        if secret_document is not None:
+            secret_document.clear()
+    if operation_error is not None or revocation_error is not None:
+        raise ProvisioningError("The issued Zulip AppRole failed its read/revoke test.")
+
+
+def _service_is_active() -> bool:
+    completed = subprocess.run(
+        ["/usr/bin/systemctl", "is-active", "--quiet", SERVICE_NAME],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return completed.returncode == 0
+
+
+def provision(*, password_fd: int | None = None) -> None:
+    if os.geteuid() != 0:
+        raise ProvisioningError("Run this provisioner as root.")
+    if _service_is_active():
+        raise ProvisioningError("Stop zulip-approval-bridge.service before rotating its AppRole.")
+    ca_path = Path(BAO_CA)
+    _validate_root_owned_regular(ca_path, "pinned local OpenBao CA")
+    launcher = _load_launcher()
+    _prepare_credstore()
+
+    existing = tuple(os.path.lexists(path) for path in _credential_paths())
+    if any(existing) and not all(existing):
+        raise ProvisioningError("The Zulip encrypted credential set is incomplete.")
+    if all(existing):
+        for path in _credential_paths():
+            _validate_existing_credential(path)
+
+    if password_fd is None:
+        confirmation = input(
+            "This rotates the dormant Zulip AppRole. Type PROVISION-ZULIP to continue: "
+        )
+        if confirmation != "PROVISION-ZULIP":
+            raise ProvisioningError("Provisioning cancelled.")
+        password = getpass.getpass("OpenBao password for ops-user (never stored): ")
+    else:
+        password = _password_from_pipe(password_fd)
+    if not password:
+        raise ProvisioningError("An OpenBao password is required.")
+
+    human_token: str | None = None
+    old_accessor: str | None = None
+    new_accessor: str | None = None
+    rotation_begun = False
+    install_begun = False
+    completed_install = False
+    staging_directory: Path | None = None
+    operation_error: BaseException | None = None
+    revocation_error: BaseException | None = None
+
+    try:
+        username = urllib.parse.quote("ops-user", safe="")
+        login = _request(
+            "POST", f"/v1/auth/userpass/login/{username}", payload={"password": password}
+        )
+        password = ""
+        if not isinstance(login, dict) or not isinstance(login.get("auth"), dict):
+            raise ProvisioningError("The human OpenBao login failed.")
+        human_token = _validated(login["auth"].get("client_token"), _TOKEN_RE)
+
+        secret_document = _request("GET", KV_PATH, token=human_token)
+        if not isinstance(secret_document, dict):
+            raise ProvisioningError("The required Zulip KV object is unavailable.")
+        _validate_secret_document(secret_document, launcher)
+        secret_document.clear()
+
+        role_document = _request(
+            "GET", f"/v1/auth/approle/role/{ROLE_NAME}", token=human_token
+        )
+        if not isinstance(role_document, dict):
+            raise ProvisioningError("The zulip-bridge AppRole is unavailable.")
+        _validate_role(role_document)
+
+        if all(existing):
+            old_accessor = _decrypt_accessor(_credential_paths()[2])
+
+        role_id_document = _request(
+            "GET", f"/v1/auth/approle/role/{ROLE_NAME}/role-id", token=human_token
+        )
+        if not isinstance(role_id_document, dict):
+            raise ProvisioningError("The zulip-bridge RoleID is unavailable.")
+        role_id = _validated(_data(role_id_document).get("role_id"), _IDENTIFIER_RE)
+
+        secret_id_document = _request(
+            "POST", f"/v1/auth/approle/role/{ROLE_NAME}/secret-id", token=human_token
+        )
+        if not isinstance(secret_id_document, dict):
+            raise ProvisioningError("OpenBao did not issue a Zulip SecretID.")
+        secret_id_data = _data(secret_id_document)
+        secret_id = _validated(secret_id_data.get("secret_id"), _IDENTIFIER_RE)
+        new_accessor = _validated(
+            secret_id_data.get("secret_id_accessor"), _IDENTIFIER_RE
+        )
+        issued_ttl = secret_id_data.get("secret_id_ttl")
+        if isinstance(issued_ttl, bool) or issued_ttl != 2_592_000:
+            raise ProvisioningError("OpenBao returned a non-30-day SecretID TTL.")
+
+        _test_runtime_credentials(role_id, secret_id, launcher)
+
+        staging_directory = Path(
+            tempfile.mkdtemp(prefix=".zulip-openbao-", dir=CREDSTORE)
+        )
+        os.chmod(staging_directory, 0o700)
+        staged_values = (role_id, secret_id, new_accessor)
+        for name, value in zip(CREDENTIAL_NAMES, staged_values, strict=True):
+            _encrypt_credential(name, value, staging_directory / name)
+        staged_values = ("", "", "")
+        secret_id_data.clear()
+        secret_id_document.clear()
+        role_id_document.clear()
+        role_id = secret_id = ""
+
+        if old_accessor is not None:
+            rotation_begun = True
+            _destroy_accessor(human_token, old_accessor)
+            old_accessor = None
+
+        install_begun = True
+        for name in CREDENTIAL_NAMES:
+            os.replace(staging_directory / name, CREDSTORE / name)
+        restorecon = Path("/usr/sbin/restorecon")
+        if restorecon.is_file():
+            relabel = subprocess.run(
+                [str(restorecon), "-F", *[str(path) for path in _credential_paths()]],
+                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if relabel.returncode != 0:
+                raise ProvisioningError("SELinux credential relabeling failed.")
+        directory_fd = os.open(CREDSTORE, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        completed_install = True
+    except BaseException as exc:
+        operation_error = exc
+        if install_begun or rotation_begun:
+            try:
+                _remove_runtime_credentials()
+            except BaseException:
+                pass
+        if human_token is not None and new_accessor is not None:
+            try:
+                _destroy_accessor(human_token, new_accessor)
+            except BaseException:
+                pass
+    finally:
+        password = ""
+        old_accessor = None
+        if human_token is not None:
+            try:
+                _request(
+                    "POST",
+                    "/v1/auth/token/revoke-self",
+                    token=human_token,
+                    expect_json=False,
+                )
+            except BaseException as exc:
+                revocation_error = exc
+                if completed_install and new_accessor is not None:
+                    try:
+                        _destroy_accessor(human_token, new_accessor)
+                    except BaseException:
+                        pass
+            human_token = None
+        new_accessor = None
+        if staging_directory is not None:
+            shutil.rmtree(staging_directory, ignore_errors=True)
+
+    if revocation_error is not None and completed_install:
+        try:
+            _remove_runtime_credentials()
+        except BaseException:
+            pass
+        completed_install = False
+    if operation_error is not None:
+        if isinstance(operation_error, (EOFError, KeyboardInterrupt)):
+            raise operation_error
+        if isinstance(operation_error, ProvisioningError):
+            raise operation_error
+        raise ProvisioningError("Zulip AppRole provisioning failed.") from operation_error
+    if revocation_error is not None:
+        raise ProvisioningError(
+            "The provisioning token revocation could not be confirmed; local credentials were removed."
+        )
+    if not completed_install:
+        raise ProvisioningError("Zulip AppRole provisioning did not complete.")
+
+
+def main() -> int:
+    args = _parse_args()
+    try:
+        provision(password_fd=args.password_fd)
+    except (EOFError, KeyboardInterrupt):
+        print("provision-zulip-openbao: cancelled", file=sys.stderr)
+        return 130
+    except ProvisioningError as exc:
+        print(f"provision-zulip-openbao: {exc}", file=sys.stderr)
+        return 1
+    print("Zulip AppRole credentials were encrypted for host+TPM2; no value was displayed.")
+    print("zulip-approval-bridge.service remains disabled and was not started.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

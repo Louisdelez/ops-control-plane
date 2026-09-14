@@ -1,0 +1,63 @@
+[[permission]]
+identifier = "allow-open-service"
+commands.allow = ["open_service"]
+
+[[permission]]
+identifier = "allow-get-catalogue"
+commands.allow = ["get_catalogue"]
+
+[[permission]]
+identifier = "allow-get-runtime-snapshot"
+commands.allow = ["get_runtime_snapshot"]
+
+[[permission]]
+identifier = "allow-simulate-cost"
+commands.allow = ["simulate_cost"]
+
+[[permission]]
+identifier = "allow-preview-candidates"
+commands.allow = ["preview_candidates"]
+
+[[permission]]
+identifier = "allow-refresh-provider-finance"
+commands.allow = ["refresh_provider_finance"]
+
+[[permission]]
+identifier = "allow-save-provider-credential"
+commands.allow = ["save_provider_credential"]
+
+[[permission]]
+identifier = "allow-get-bootstrap-status"
+commands.allow = ["get_bootstrap_status"]
+
+[[permission]]
+identifier = "allow-get-bootstrap-result"
+commands.allow = ["get_bootstrap_result"]
+
+[[permission]]
+identifier = "allow-terminal-start"
+commands.allow = ["terminal_start"]
+
+[[permission]]
+identifier = "allow-terminal-poll"
+commands.allow = ["terminal_poll"]
+
+[[permission]]
+identifier = "allow-terminal-write"
+commands.allow = ["terminal_write"]
+
+[[permission]]
+identifier = "allow-terminal-resize"
+commands.allow = ["terminal_resize"]
+
+[[permission]]
+identifier = "allow-terminal-close"
+commands.allow = ["terminal_close"]
+
+[[permission]]
+identifier = "allow-execution-status"
+commands.allow = ["execution_status"]
+
+[[permission]]
+identifier = "allow-execution-mode"
+commands.allow = ["execution_mode"]

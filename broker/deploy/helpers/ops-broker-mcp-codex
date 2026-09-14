@@ -1,0 +1,22 @@
+#!/usr/bin/bash -p
+set -euo pipefail
+
+if [[ $# -ne 0 ]]; then
+  echo "This wrapper accepts no arguments." >&2
+  exit 64
+fi
+
+exec /usr/bin/env -i \
+  PATH=/usr/sbin:/usr/bin \
+  HOME=/var/lib/ops-broker \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONNOUSERSITE=1 \
+  OPS_BROKER_DATABASE=/var/lib/ops-broker/state.db \
+  OPS_BROKER_RUNBOOKS=/opt/ops-broker/runbooks \
+  OPS_BROKER_ACTION_POLICY=/etc/ops-broker/actions.yaml \
+  OPS_BROKER_RBAC_POLICY=/etc/ops-broker/rbac.yaml \
+  OPS_BROKER_EXECUTABLES_POLICY=/etc/ops-broker/executables.yaml \
+  OPS_BROKER_MCP_ACTOR_ID=codex-supervised \
+  /opt/ops-broker/venv/bin/ops-broker-mcp

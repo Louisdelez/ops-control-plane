@@ -1,0 +1,20 @@
+## Control-plane configuration and credential bootstrap integrity.
+-w /etc/openbao.d/ -p wa -k ops_openbao_config
+-w /etc/credstore.encrypted/ -p wa -k ops_credential_store
+-w /etc/sudoers.d/ -p wa -k ops_sudo_policy
+-w /etc/ops-broker/ -p wa -k ops_broker_config
+-w /etc/ops-memory/ -p wa -k ops_memory_config
+-w /etc/ops-orchestrator/ -p wa -k ops_orchestrator_config
+-w /etc/prometheus/ -p wa -k ops_monitoring_config
+-w /etc/claude-code/ -p wa -k ops_claude_mcp_config
+-w /home/ops-user/.ssh/ -p wa -k ops_ssh_bootstrap
+-w /home/ops-user/.codex/config.toml -p wa -k ops_codex_mcp_config
+-w /home/ops-user/.claude/CLAUDE.md -p wa -k ops_claude_instructions
+-w /opt/ops-broker/ -p wa -k ops_broker_release
+-w /opt/ops-control-plane/ -p wa -k ops_control_plane_release
+-w /var/lib/hermes/hermes-agent/ -p wa -k ops_hermes_release
+-w /var/lib/hermes/config.yaml -p wa -k ops_hermes_config
+-w /var/lib/hermes/SOUL.md -p wa -k ops_hermes_config
+-w /var/lib/hermes/skills/ -p wa -k ops_hermes_config
+-w /usr/local/libexec/ -p wa -k ops_runbook_helpers
+-w /usr/local/sbin/ -p wa -k ops_secret_provisioner

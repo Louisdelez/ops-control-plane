@@ -1,0 +1,19 @@
+#!/usr/bin/bash -p
+set -euo pipefail
+
+if [[ $# -ne 0 ]]; then
+  echo "This wrapper accepts no arguments." >&2
+  exit 64
+fi
+
+exec /usr/bin/env -i \
+  PATH=/usr/sbin:/usr/bin \
+  HOME=/var/empty \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONNOUSERSITE=1 \
+  OPS_ORCHESTRATOR_SOCKET=/run/ops-orchestrator/api.sock \
+  OPS_ORCHESTRATOR_MCP_ACTOR_ID=claude-supervised \
+  OPS_ORCHESTRATOR_MCP_PROJECTS=minecraft,infra-shared,network-shared,monitoring-shared,backup-shared \
+  /opt/ops-orchestrator/venv/bin/ops-orchestrator-mcp

@@ -1,0 +1,30 @@
+[Unit]
+Description=Verify restored units and finalize one-shot bootstrap recovery
+StartLimitIntervalSec=0
+After=ops-control-plane-bootstrap-recovery.service ops-broker.socket ops-broker.service ops-broker-audit-verify.timer ops-broker-backup.timer ops-broker-audit-verify.service ops-broker-backup.service ops-broker-backup-metric-success.service ops-broker-backup-metric-failure.service zulip-local-secrets.service zulip-local.service zulip-local-health.timer zulip-local-health.service zulip-local-backup.timer zulip-local-backup.service zulip-alertmanager-query.socket zulip-alertmanager-query.service zulip-approval-bridge.service ops-orchestrator-secrets.service ops-orchestrator-provider-finance-daemon.service ops-orchestrator.service ops-orchestrator-metrics.timer ops-orchestrator-provider-finance.timer ops-orchestrator-provider-finance.service ops-orchestrator-hermes-facade.service hermes-gateway.service ops-orchestrator-metrics.service
+ConditionPathExists=/var/lib/ops-control-plane-bootstrap/transaction.json
+
+[Service]
+Type=oneshot
+Restart=on-failure
+RestartSec=5s
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/libexec/ops-control-plane-bootstrap --recover-activate
+TimeoutStartSec=2h
+KillMode=mixed
+LimitCORE=0
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+
+[Install]
+RequiredBy=multi-user.target

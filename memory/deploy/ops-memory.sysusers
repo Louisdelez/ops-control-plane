@@ -1,0 +1,13 @@
+g ops-memory-api -
+u opsmemory - "Ops semantic memory" /var/lib/ops-memory /usr/sbin/nologin
+m opsmemory ops-memory-api
+m hermesd ops-memory-api
+m opsbroker ops-memory-api
+m zulipbridge ops-memory-api
+m ops-user ops-memory-api
+m minecraft-ops ops-memory-api
+m infra-network ops-memory-api
+m ops-monitor ops-memory-api
+m backup-agent ops-memory-api
+m deploy-agent ops-memory-api
+m security-audit ops-memory-api

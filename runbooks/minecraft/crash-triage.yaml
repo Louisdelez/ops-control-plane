@@ -1,0 +1,17 @@
+id: minecraft.crash-triage.v1
+version: 1
+project: minecraft
+action_class: A
+description: Collecte bornee apres crash Minecraft ; ne redemarre rien
+timeout_seconds: 30
+command:
+  argv:
+    - /usr/local/libexec/ops-runbooks/minecraft-crash-triage
+    - "{instance}"
+parameters:
+  instance:
+    type: enum
+    values: [velocity, lobby, survival]
+output:
+  max_bytes: 65536
+  redact: true

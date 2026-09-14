@@ -1,0 +1,20 @@
+[Unit]
+Description=Ops missions through connected native CLI accounts
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/ops-native/venv/bin/ops-native-cli-pilot --tool auto
+WorkingDirectory=/home/ops-user/ops-control-plane
+Restart=on-failure
+RestartSec=30
+KillMode=control-group
+TimeoutStopSec=15
+MemoryMax=1500M
+TasksMax=128
+Slice=ops-agents.slice
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+WantedBy=default.target

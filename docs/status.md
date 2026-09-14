@@ -1,0 +1,28 @@
+# État du projet
+
+État éditorial au **14 septembre 2026**. Le projet est en développement.
+
+## Sources disponibles
+
+Broker avec missions, runbooks, permissions et audit ; mémoire SQLite/Qdrant ; orchestrateur avec budgets ; connecteur natif et pilote CLI ; application Ops et Atlas ; pont Zulip et PWA Web Push ; outils de sauvegarde, restauration et continuité.
+
+## Validation historique
+
+Sur l’installation de développement, des restaurations isolées des données applicatives ont été réalisées. La reprise des services et la lecture de la mémoire après un redémarrage réel ont été vérifiées le 14 septembre 2026. Les preuves opérationnelles privées ne sont pas publiées. Ces observations ne garantissent pas une installation sur une autre machine.
+
+## Travaux restants
+
+1. Finaliser et tester la coordination entre équipes d’agents.
+2. Raccorder et recetter le circuit staging → production.
+3. Démontrer une reconstruction complète sur machine vierge.
+4. Poursuivre l’indexation API sous budget et mesurer sa qualité.
+5. Confirmer la réception physique des notifications sur l’iPhone cible.
+6. Généraliser la configuration pour une installation reproductible hors de l’environnement d’origine.
+
+## Publication
+
+L’historique public démarre avec une copie des sources du chantier, y compris les changements récents non commités. Les données d’installation ont été remplacées par des exemples. Historiques Git privés, secrets, états d’exécution, sauvegardes et rapports privés sont exclus.
+
+Les anciens manifestes, empreintes et scripts de migration servent de références et de fixtures. Ils ne sont pas des signatures valides de cet export modifié. Les versions, prix et catalogues historiques nécessitent leur propre actualisation.
+
+Les runbooks historiques de publication Zulip v2/v3 sont conservés en `.yaml.example`, hors du registre actif : leurs helpers ne figurent pas dans la politique publique d’exécution.

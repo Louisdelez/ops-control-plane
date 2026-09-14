@@ -1,0 +1,65 @@
+#!/usr/bin/python3
+"""Emit a small, deterministic JSON health snapshot. No arbitrary input."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+
+SERVICES = (
+    "openbao.service",
+    "ollama.service",
+    "ops-broker.service",
+    "hermes-gateway.service",
+)
+ENVIRONMENT = {"PATH": "/usr/sbin:/usr/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
+
+
+def service_state(unit: str) -> str:
+    completed = subprocess.run(
+        ["/usr/bin/systemctl", "is-active", unit],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+        env=ENVIRONMENT,
+    )
+    value = completed.stdout.strip()
+    return value if value in {"active", "inactive", "failed", "activating", "deactivating"} else "unknown"
+
+
+def main() -> int:
+    if len(sys.argv) != 1:
+        return 64
+    memory: dict[str, int] = {}
+    for line in Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
+        name, value = line.split(":", 1)
+        if name in {"MemTotal", "MemAvailable"}:
+            memory[name] = int(value.strip().split()[0]) * 1024
+    disk = shutil.disk_usage("/")
+    result = {
+        "cpu_load": [round(value, 3) for value in os.getloadavg()],
+        "disk_root": {"free_bytes": disk.free, "total_bytes": disk.total},
+        "memory": {
+            "available_bytes": memory["MemAvailable"],
+            "total_bytes": memory["MemTotal"],
+        },
+        "services": {unit: service_state(unit) for unit in SERVICES},
+        "uptime_seconds": int(float(Path("/proc/uptime").read_text(encoding="ascii").split()[0])),
+    }
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        print('{"error":"health_collection_failed"}')
+        raise SystemExit(1) from None

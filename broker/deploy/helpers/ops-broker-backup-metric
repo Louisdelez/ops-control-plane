@@ -1,0 +1,75 @@
+#!/usr/bin/python3
+"""Atomically publish non-sensitive backup health for node_exporter."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import re
+import sys
+import tempfile
+import time
+
+
+DESTINATION = Path("/var/lib/node-exporter/textfile/broker-backup.prom")
+TIMESTAMP_PATTERN = re.compile(
+    r"^ops_broker_backup_last_success_timestamp_seconds ([0-9]+(?:\.[0-9]+)?)$",
+    re.MULTILINE,
+)
+
+
+def previous_success_timestamp() -> str:
+    try:
+        existing = DESTINATION.read_text(encoding="ascii")
+    except FileNotFoundError:
+        return "0"
+    match = TIMESTAMP_PATTERN.search(existing)
+    return match.group(1) if match else "0"
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or sys.argv[1] not in {"success", "failure"}:
+        return 64
+    outcome = sys.argv[1]
+    timestamp = f"{time.time():.6f}" if outcome == "success" else previous_success_timestamp()
+    verified = "1" if outcome == "success" else "0"
+    content = (
+        "# HELP ops_broker_backup_last_success_timestamp_seconds Unix time of the last verified backup.\n"
+        "# TYPE ops_broker_backup_last_success_timestamp_seconds gauge\n"
+        f"ops_broker_backup_last_success_timestamp_seconds {timestamp}\n"
+        "# HELP ops_broker_backup_last_verify_ok Whether the latest backup attempt verified successfully.\n"
+        "# TYPE ops_broker_backup_last_verify_ok gauge\n"
+        f"ops_broker_backup_last_verify_ok {verified}\n"
+    )
+    destination_directory = DESTINATION.parent
+    if destination_directory.is_symlink() or not destination_directory.is_dir():
+        return 73
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".broker-backup.",
+        suffix=".tmp",
+        dir=destination_directory,
+        text=True,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="ascii") as output:
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.chmod(temporary, 0o640)
+        os.replace(temporary, DESTINATION)
+        directory_descriptor = os.open(destination_directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except OSError:
+        raise SystemExit(1) from None

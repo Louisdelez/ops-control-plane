@@ -1,0 +1,16 @@
+id: local.control-plane-deployment-status.v1
+version: 1
+project: infra-shared
+action_class: A
+description: Lire le statut borne du deploiement local Atlas, orchestrateur, Hermes et Zulip
+timeout_seconds: 10
+command:
+  argv:
+    - /usr/bin/sudo
+    - -n
+    - /usr/local/libexec/ops-runbooks/control-plane-deployment
+    - status
+parameters: {}
+output:
+  max_bytes: 8192
+  redact: true

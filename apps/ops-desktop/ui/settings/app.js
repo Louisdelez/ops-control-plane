@@ -1,0 +1,14 @@
+const invoke=window.__TAURI__.core.invoke;
+const toggle=document.querySelector('#enabled'),status=document.querySelector('#status');
+function mode(){document.querySelector('#mode').textContent=toggle.checked?'Activé · enregistrement et reconnexion automatiques':'Désactivé · tes accès enregistrés sont conservés';}
+async function refresh(){try{const s=await invoke('settings_state');toggle.checked=s.enabled;toggle.disabled=false;mode();document.querySelector('#version').textContent=s.version;if(s.save_failed)status.textContent='Le dernier enregistrement a échoué. Déverrouille le trousseau Fedora et reconnecte-toi.';}catch(e){status.textContent='Impossible de charger les réglages : '+String(e);}}
+toggle.addEventListener('change',async()=>{toggle.disabled=true;status.textContent='';try{await invoke('settings_enabled',{enabled:toggle.checked});mode();}catch(e){toggle.checked=!toggle.checked;status.textContent=String(e);}finally{toggle.disabled=false;}});
+for(const button of document.querySelectorAll('.manage[data-service]'))button.addEventListener('click',async()=>{button.disabled=true;status.textContent='';try{await invoke('settings_manage',{service:button.dataset.service});}catch(e){status.textContent='Impossible d’ouvrir cet accès : '+String(e);}finally{button.disabled=false;}});
+for(const button of document.querySelectorAll('[data-section]'))button.addEventListener('click',()=>{for(const b of document.querySelectorAll('[data-section]')){b.classList.toggle('active',b===button);if(b===button)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');}for(const s of document.querySelectorAll('main>section'))s.hidden=s.id!==button.dataset.section;document.querySelector('#crumb').textContent=({about:'À propos d’Ops',providers:'Fournisseurs API',connections:'Mots de passe et connexions'})[button.dataset.section];});
+refresh();
+
+const providerToggles=[...document.querySelectorAll('.provider-toggle')];
+async function providerSettings(){try{const state=await invoke('provider_tabs');for(const t of providerToggles){t.checked=state.visible.includes(t.dataset.provider);t.disabled=false;}}catch(e){document.querySelector('#provider-status').textContent=String(e);}}
+for(const t of providerToggles)t.addEventListener('change',async()=>{for(const b of providerToggles)b.disabled=true;try{await invoke('settings_providers',{visible:providerToggles.filter(b=>b.checked).map(b=>b.dataset.provider)});document.querySelector('#provider-status').textContent='Affichage des onglets enregistré.';}catch(e){t.checked=!t.checked;document.querySelector('#provider-status').textContent=String(e);}finally{for(const b of providerToggles)b.disabled=false;}});
+for(const b of document.querySelectorAll('.portal'))b.addEventListener('click',async()=>{try{await invoke('provider_browser',{service:b.dataset.provider});}catch(e){document.querySelector('#provider-status').textContent=String(e);}});
+providerSettings();

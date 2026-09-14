@@ -1,0 +1,51 @@
+#!/usr/bin/python3
+"""Privileged restart helper; sudoers also pins every accepted argv."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+
+
+ALLOWED_UNITS = frozenset(
+    {
+        "ollama.service",
+        "ops-broker.service",
+        "hermes-gateway.service",
+    }
+)
+ENVIRONMENT = {"PATH": "/usr/sbin:/usr/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or sys.argv[1] not in ALLOWED_UNITS:
+        print('{"error":"unit_not_allowed"}')
+        return 64
+    if os.geteuid() != 0:
+        print('{"error":"root_required"}')
+        return 77
+    unit = sys.argv[1]
+    completed = subprocess.run(
+        ["/usr/bin/systemctl", "--no-block", "restart", unit],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+        check=False,
+        env=ENVIRONMENT,
+    )
+    if completed.returncode != 0:
+        print(json.dumps({"error": "restart_not_queued", "unit": unit}, sort_keys=True))
+        return 1
+    print(json.dumps({"queued": True, "unit": unit}, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (OSError, subprocess.SubprocessError):
+        print('{"error":"restart_helper_failed"}')
+        raise SystemExit(1) from None

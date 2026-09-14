@@ -1,0 +1,42 @@
+[Unit]
+Description=Generate deterministic Dell Ops metrics
+After=openbao.service
+
+[Service]
+Type=oneshot
+User=root
+Group=node-exporter
+ExecStart=/usr/local/libexec/ops-local-metrics
+UMask=0027
+LimitCORE=0
+MemoryMax=128M
+TasksMax=64
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+DevicePolicy=closed
+DeviceAllow=/dev/nvme0n1 r
+ProtectKernelTunables=yes
+# modinfo reads /usr/lib/modules to report the installed NVIDIA signer.
+# ProtectSystem=strict keeps that tree read-only; module loading is unavailable.
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+KeyringMode=private
+RemoveIPC=yes
+CapabilityBoundingSet=CAP_AUDIT_CONTROL CAP_DAC_READ_SEARCH CAP_SYS_ADMIN CAP_SYS_RAWIO
+AmbientCapabilities=
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadWritePaths=/var/lib/node-exporter/textfile

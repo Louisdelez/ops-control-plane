@@ -1,0 +1,69 @@
+#!/usr/bin/python3 -I
+"""Read one fixed remote systemd state through the owner's native SSH account."""
+import json,os,signal,subprocess,sys,tempfile,time
+from pathlib import Path
+ALIASES={'edge-vps':'vps','prod':'prod','nas':'nas','gamebox':'gamebox'}
+STATES={'initializing','starting','running','degraded','maintenance','stopping','offline','unknown'}
+DIRECTORY=Path('/run/ops-remote-preflight')
+def command(resource,alternate=False):
+ alias=ALIASES[resource]
+ route=[]
+ if alternate:
+  if resource=='gamebox':alias='gamebox-remote'
+  elif resource=='prod':
+   route=['-J','vps','-o','HostName=198.51.100.4','-o','HostKeyAlias=192.0.2.65']
+  else:raise ValueError('No reviewed alternate route')
+ return ['/usr/sbin/runuser','-u','ops-user','--','/usr/bin/env','-i','HOME=/home/ops-user','USER=ops-user','LOGNAME=ops-user','PATH=/usr/bin:/bin','LANG=C',
+ '/usr/bin/ssh','-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ClearAllForwardings=yes',
+ '-o','PermitLocalCommand=no','-o','RemoteCommand=none','-o','ConnectTimeout=8','-o','ConnectionAttempts=1',
+ '-o','ServerAliveInterval=5','-o','ServerAliveCountMax=1',*route,alias,'/usr/bin/systemctl is-system-running']
+def failure_reason(raw):
+ text=raw.lower()
+ for markers,reason in [
+  ((b'host key verification failed',b'remote host identification has changed'),'host_key_unverified'),
+  ((b'permission denied',b'no supported authentication methods'),'authentication_failed'),
+  ((b'no route to host',b'network is unreachable'),'network_unreachable'),
+  ((b'connection refused',),'connection_refused'),
+  ((b'connection timed out',b'operation timed out'),'timeout'),
+  ((b'could not resolve hostname',),'name_resolution_failed')]:
+  if any(marker in text for marker in markers):return reason
+ return 'ssh_or_remote_check_failed'
+
+def observe_route(resource,alternate=False):
+ # Output is bounded on disk and never returned verbatim; no remote content is logged.
+ with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+  process=subprocess.Popen(command(resource,alternate),stdin=subprocess.DEVNULL,stdout=output,stderr=errors,start_new_session=True)
+  try:
+   try:code=process.wait(timeout=10)
+   except subprocess.TimeoutExpired:return {'status':'unavailable','reason':'timeout'}
+   output.seek(0);raw=output.read(256)
+   try:state=raw.decode('ascii').strip()
+   except UnicodeDecodeError:state=''
+   if code in {0,1} and state in STATES:return {'status':'observed','systemd_state':state}
+   errors.seek(0)
+   return {'status':'unavailable','reason':failure_reason(errors.read(8192))}
+  finally:
+   if process.poll() is None:
+    try:os.killpg(process.pid,signal.SIGKILL)
+    except ProcessLookupError:pass
+    process.wait()
+def observe(resource):
+ result=observe_route(resource)
+ if resource in {'gamebox','prod'} and result.get('reason') in {'network_unreachable','connection_refused','timeout'}:
+  alternate=observe_route(resource,True)
+  if alternate['status']=='observed':return alternate
+  result['alternate_reason']=alternate['reason']
+ return result
+
+def main():
+ if os.geteuid()!=0 or len(sys.argv)!=2 or sys.argv[1] not in ALIASES:raise SystemExit(2)
+ resource=sys.argv[1];started=time.time()
+ result={'resource':resource,'checked_at':started,**observe(resource)}
+ DIRECTORY.mkdir(mode=0o755,exist_ok=True)
+ fd,name=tempfile.mkstemp(prefix='.'+resource+'-',dir=DIRECTORY)
+ try:
+  with os.fdopen(fd,'w') as f:json.dump(result,f);f.write('\n');f.flush();os.fsync(f.fileno())
+  os.chmod(name,0o644);os.replace(name,DIRECTORY/(resource+'.json'))
+ finally:
+  if os.path.exists(name):os.unlink(name)
+if __name__=='__main__':main()

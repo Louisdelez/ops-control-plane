@@ -1,0 +1,14 @@
+[Unit]
+Description=Relay private Zulip ingress to Dell SSH return path
+Requires=ops-zulip-relay.socket
+After=ops-zulip-relay.socket
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd 127.0.0.1:17443
+DynamicUser=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+MemoryMax=64M
+TasksMax=16
+LimitCORE=0

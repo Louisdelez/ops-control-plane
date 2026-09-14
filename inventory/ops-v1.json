@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "generated_from": [
+    "docs/getting-started.md (public example)"
+  ],
+  "resources": [
+    {
+      "id": "dell-control",
+      "kind": "control-plane",
+      "provider": "local",
+      "os_family": "fedora",
+      "project": "infra-shared",
+      "environment": "operations",
+      "criticality": "high",
+      "connection_alias": "local",
+      "management_enabled": false,
+      "discovery_enabled": false,
+      "expected_services": [
+        "openbao.service",
+        "node-exporter.service",
+        "prometheus.service",
+        "prometheus-alertmanager.service"
+      ],
+      "shared_by": [
+        "infra-shared",
+        "monitoring-shared",
+        "backup-shared"
+      ]
+    },
+    {
+      "id": "edge-vps",
+      "kind": "network-edge",
+      "provider": "ovh",
+      "os_family": "debian",
+      "project": "network-shared",
+      "environment": "production",
+      "criticality": "critical",
+      "connection_alias": "vps",
+      "management_enabled": false,
+      "discovery_enabled": false,
+      "expected_services": [
+        "nginx.service",
+        "ssh.service",
+        "wireguard-wg0"
+      ],
+      "shared_by": [
+        "minecraft",
+        "infra-shared",
+        "monitoring-shared",
+        "backup-shared"
+      ]
+    },
+    {
+      "id": "prod",
+      "kind": "container-host",
+      "provider": "on-premises",
+      "os_family": "debian",
+      "project": "infra-shared",
+      "environment": "production",
+      "criticality": "critical",
+      "connection_alias": "prod",
+      "management_enabled": false,
+      "discovery_enabled": false,
+      "expected_services": [
+        "docker.service",
+        "postgresql",
+        "traefik",
+        "prometheus"
+      ],
+      "shared_by": [
+        "minecraft",
+        "monitoring-shared",
+        "backup-shared"
+      ]
+    },
+    {
+      "id": "nas",
+      "kind": "storage-and-services",
+      "provider": "on-premises",
+      "os_family": "debian",
+      "project": "infra-shared",
+      "environment": "production",
+      "criticality": "critical",
+      "connection_alias": "nas",
+      "management_enabled": false,
+      "discovery_enabled": false,
+      "expected_services": [
+        "docker.service",
+        "nginx-proxy-manager",
+        "mailcow",
+        "restic-backup"
+      ],
+      "shared_by": [
+        "network-shared",
+        "monitoring-shared",
+        "backup-shared"
+      ]
+    },
+    {
+      "id": "gamebox",
+      "kind": "minecraft-host",
+      "provider": "on-premises",
+      "os_family": "debian",
+      "project": "minecraft",
+      "environment": "lab",
+      "criticality": "medium",
+      "connection_alias": "gamebox",
+      "management_enabled": false,
+      "discovery_enabled": false,
+      "expected_services": [
+        "velocity.service",
+        "minecraft.service",
+        "minecraft-survie.service",
+        "postgresql@17-main.service"
+      ],
+      "shared_by": [
+        "minecraft",
+        "monitoring-shared",
+        "backup-shared"
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "id": "epicube-dns",
+      "type": "dns",
+      "enabled": false,
+      "project": "network-shared",
+      "resource_id": "edge-vps",
+      "timeout_seconds": 5,
+      "hostname": "game.example.org",
+      "expected_addresses": []
+    },
+    {
+      "id": "epicube-tls",
+      "type": "tls",
+      "enabled": false,
+      "project": "network-shared",
+      "resource_id": "edge-vps",
+      "timeout_seconds": 8,
+      "hostname": "game.example.org",
+      "port": 443,
+      "minimum_days": 21
+    },
+    {
+      "id": "epicube-http",
+      "type": "http",
+      "enabled": false,
+      "project": "minecraft",
+      "resource_id": "edge-vps",
+      "timeout_seconds": 8,
+      "url": "https://game.example.org/",
+      "expected_status": 200,
+      "allow_plain_http": false
+    },
+    {
+      "id": "minecraft-public-port",
+      "type": "tcp",
+      "enabled": false,
+      "project": "minecraft",
+      "resource_id": "edge-vps",
+      "timeout_seconds": 5,
+      "hostname": "game.example.org",
+      "port": 25565
+    },
+    {
+      "id": "prod-backup-evidence",
+      "type": "backup",
+      "enabled": false,
+      "project": "backup-shared",
+      "resource_id": "prod",
+      "timeout_seconds": 5,
+      "evidence_path": "/var/lib/ops-v1/evidence/prod-backup.json",
+      "maximum_age_seconds": 108000,
+      "require_integrity": true,
+      "expected_target_id": "prod"
+    }
+  ]
+}

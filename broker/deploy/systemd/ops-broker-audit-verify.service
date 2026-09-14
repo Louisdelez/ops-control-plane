@@ -1,0 +1,43 @@
+[Unit]
+Description=Verify ops-broker audit hash chain
+Documentation=file:///opt/ops-broker/README.md
+ConditionPathExists=/var/lib/ops-broker/state.db
+
+[Service]
+Type=oneshot
+User=opsbroker
+Group=opsbroker
+WorkingDirectory=/var/lib/ops-broker
+ExecStart=/opt/ops-broker/venv/bin/ops-broker-verify --database /var/lib/ops-broker/state.db
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+RemoveIPC=yes
+KeyringMode=private
+InaccessiblePaths=-/var/lib/hermes -/var/lib/zulip-bridge
+# SQLite read-only WAL access may create or update its -shm coordination file.
+# The verifier itself sets mode=ro and PRAGMA query_only before reading data.
+ReadWritePaths=/var/lib/ops-broker
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=60

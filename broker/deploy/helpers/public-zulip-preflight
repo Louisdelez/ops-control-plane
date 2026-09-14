@@ -1,0 +1,68 @@
+#!/usr/bin/python3 -I
+"""Fixed, read-only network inspection. Never return config bodies or keys."""
+import json,os,runpy,shlex,subprocess,sys
+from pathlib import Path
+REMOTE=r'''
+import json,socket,subprocess,re,hashlib
+from pathlib import Path
+def run(args):
+ try:return subprocess.run(args,capture_output=True,text=True,timeout=8).stdout[:262144]
+ except Exception:return ''
+out={'hostname':socket.gethostname()}
+try:out['addresses']=json.loads(run(['ip','-j','-4','address','show']))
+except Exception:out['addresses']=[]
+out['addresses']=[{'interface':x.get('ifname'),'ipv4':[a.get('local') for a in x.get('addr_info',[]) if a.get('scope')=='global']} for x in out['addresses']]
+out['listeners']=[line.split()[:5] for line in run(['ss','-H','-lnt']).splitlines() if any(':'+str(p) in line for p in [80,443,8443])]
+out['nginx_files']=[]
+for base in ['/etc/nginx/sites-enabled','/etc/nginx/conf.d','/etc/nginx/streams-enabled','/etc/nginx/stream-conf.d']:
+ for p in Path(base).glob('*'):
+  if not p.is_file():continue
+  try:t=p.read_text()
+  except OSError:continue
+  out['nginx_files'].append({'name':p.name,'directives':re.findall(r'^\s*(listen\s+[^;\n]+|server_name\s+[^;\n]+|proxy_pass\s+[^;\n]+|ssl_preread\s+[^;\n]+);',t,re.M)})
+out['nginx_topology']=[]
+for p in [Path('/etc/nginx/nginx.conf'),*Path('/etc/nginx').glob('*.conf'),*Path('/etc/nginx').glob('stream*/*.conf')]:
+ try:t=p.read_text()
+ except OSError:continue
+ out['nginx_topology'].append({'name':str(p),'directives':[line.strip() for line in t.splitlines() if re.match(r'\s*(include|map |default |[a-zA-Z0-9_.-]+\.(?:ovh|ch) |listen |proxy_pass |ssl_preread |proxy_protocol )',line)]})
+out['port_443_processes']=sorted(set(re.findall(r'users:\(\("([^"\n]+)',run(['ss','-H','-lntp','sport = :443']))))
+out['haproxy_topology']=[]
+p=Path('/etc/haproxy/haproxy.cfg')
+if p.is_file():
+ try:
+  out['haproxy_topology']=[line.strip() for line in p.read_text().splitlines() if re.match(r'\s*(frontend |backend |listen |bind |use_backend |default_backend |acl .*req.ssl_sni|server )',line)]
+ except OSError:pass
+out['publication_prerequisites']={
+ 'certbot':Path('/usr/bin/certbot').is_file(),
+ 'existing_acme_account':any(Path('/etc/letsencrypt/accounts/acme-v02.api.letsencrypt.org/directory').glob('*/regr.json')),
+ 'socket_proxyd':Path('/usr/lib/systemd/systemd-socket-proxyd').is_file(),
+ 'haproxy_sha256':hashlib.sha256(Path('/etc/haproxy/haproxy.cfg').read_bytes()).hexdigest() if Path('/etc/haproxy/haproxy.cfg').is_file() else None,
+ 'reserved_ports_in_use':[line.split()[3] for line in run(['ss','-H','-lnt']).splitlines() if line.split()[3].rsplit(':',1)[-1] in {'17443','18443','8546'}]}
+out['zulip_proxy_error_counts']={}
+p=Path('/var/log/nginx/error.log')
+if p.is_file():
+ with p.open('rb') as f:
+  f.seek(max(0,p.stat().st_size-262144));lines=f.read().decode(errors='replace').splitlines()
+ selected=[x for x in lines if 'zulip.example.org' in x or '198.51.100.2:18443' in x]
+ for phrase in ['upstream timed out','connect() failed','SSL_do_handshake() failed','certificate verify error','while reading PROXY protocol','no live upstreams']:
+  out['zulip_proxy_error_counts'][phrase]=sum(phrase in x for x in selected)
+out['haproxy_inspection']=[x.strip() for x in run(['cat','/etc/haproxy/haproxy.cfg']).splitlines() if re.match(r'\s*(mode |tcp-request |timeout )',x)]
+out['nas_relay_journal']=[]
+for phrase in ['Failed','Permission denied','Connection refused','Started','Listening']:
+ log=run(['journalctl','-u','ops-zulip-relay.service','-u','ops-zulip-relay.socket','--since','2026-09-13 09:00:00 UTC','--no-pager','-o','cat'])
+ out['nas_relay_journal'].append({'phrase':phrase,'count':log.count(phrase)})
+out['firewall_ingress']=[x for x in run(['iptables-save','-t','filter']).splitlines() if x.startswith(':INPUT ') or x.startswith('-A INPUT ') or ('198.51.100.1' in x) or ('wg0' in x) or ('18443' in x)][:60]
+out['wireguard_interfaces']=run(['wg','show','interfaces']).strip().split()
+out['zulip_dns']=[]
+try:out['zulip_dns']=sorted({x[4][0] for x in socket.getaddrinfo('zulip.example.org',443,type=socket.SOCK_STREAM)})
+except OSError:pass
+print(json.dumps(out))
+'''
+if os.geteuid()!=0 or len(sys.argv)!=2 or sys.argv[1] not in {'edge-vps','nas','prod'}:raise SystemExit(2)
+command=runpy.run_path('/usr/local/libexec/ops-runbooks/remote-preflight-worker')['command'](sys.argv[1])
+command[-1]='sudo -n /usr/bin/python3 -c '+shlex.quote(REMOTE)
+r=subprocess.run(command,capture_output=True,timeout=25)
+if r.returncode:print(json.dumps({'resource':sys.argv[1],'status':'observation_unavailable','exit_code':r.returncode}));raise SystemExit(1)
+try:value=json.loads(r.stdout[:32768]);assert isinstance(value,dict)
+except Exception:raise SystemExit('Invalid bounded observation') from None
+print(json.dumps({'resource':sys.argv[1],'status':'observed','network':value}))

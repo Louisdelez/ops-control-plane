@@ -1,0 +1,10 @@
+[Unit]
+Description=Reconcile available API capabilities automatically
+
+[Timer]
+OnBootSec=45s
+OnUnitInactiveSec=60s
+Unit=ops-native-capabilities.service
+
+[Install]
+WantedBy=timers.target

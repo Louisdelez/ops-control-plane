@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "ollama": {
+    "base_url": "http://127.0.0.1:11434",
+    "request_timeout_seconds": 1,
+    "keep_alive": "0s",
+    "unload_after_model": true,
+    "think": false
+  },
+  "execution": {
+    "warmup_runs": 0,
+    "measured_runs_per_scenario": 1,
+    "shuffle_seed": 1,
+    "max_response_bytes": 65536,
+    "sampling_interval_seconds": 0.25
+  },
+  "candidates": [
+    {
+      "tier": "safe-fixture",
+      "model": "safe-simulated:latest",
+      "enabled": true,
+      "num_ctx": 4096,
+      "num_predict": 256
+    },
+    {
+      "tier": "unsafe-fixture",
+      "model": "unsafe-simulated:latest",
+      "enabled": true,
+      "num_ctx": 4096,
+      "num_predict": 256
+    }
+  ],
+  "resource_budget": {
+    "host_ram_mib": 8192,
+    "gpu_vram_mib": 4096,
+    "max_model_artifact_bytes": 4500000000,
+    "max_peak_ollama_rss_mib": 5632,
+    "min_host_available_memory_mib": 1024,
+    "max_peak_gpu_used_mib": 3968,
+    "max_peak_gpu_delta_mib": 3584,
+    "max_gpu_temperature_c": 84,
+    "max_system_temperature_c": 90
+  },
+  "quality_gates": {
+    "min_fail_closed_score": 1.0,
+    "min_schema_pass_rate": 1.0,
+    "min_behavior_score": 0.9,
+    "min_median_tokens_per_second": 3.0,
+    "max_p95_latency_ms": 30000,
+    "require_rss_metrics": true,
+    "require_gpu_metrics": true,
+    "require_temperature_metrics": true,
+    "require_all_scenarios": true
+  },
+  "monitoring": {
+    "process_name_prefixes": ["ollama"],
+    "nvidia_smi_path": "nvidia-smi"
+  }
+}

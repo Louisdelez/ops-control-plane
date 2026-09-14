@@ -1,0 +1,574 @@
+#!/usr/bin/python3
+"""Provision the narrow OpenBao Raft backup AppRole interactively.
+
+No credential is printed or passed in argv.  RoleID, SecretID and the accessor
+are persisted only as host+TPM2 encrypted systemd credentials.  The runtime
+test downloads a snapshot into a bounded discard loop and revokes its token;
+it never writes plaintext snapshot bytes.
+"""
+
+from __future__ import annotations
+
+import getpass
+import hmac
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import ssl
+import stat
+import subprocess
+import sys
+import tempfile
+from typing import Any
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+BAO_ORIGIN = "https://127.0.0.1:8200"
+BAO_CA = Path("/etc/openbao.d/tls/ca.crt")
+POLICY_FILE = Path(
+    "/usr/local/share/ops-control-plane/openbao/policies/openbao-backup-runtime.hcl"
+)
+POLICY_NAME = "openbao-backup-runtime"
+ROLE_NAME = "openbao-backup-runtime"
+CREDSTORE = Path("/etc/credstore.encrypted")
+CREDENTIAL_NAMES = (
+    "openbao-backup-role-id",
+    "openbao-backup-secret-id",
+    "openbao-backup-secret-id-accessor",
+)
+SERVICES = ("openbao-raft-backup.service", "openbao-raft-backup.timer")
+MAX_RESPONSE_BYTES = 32 * 1024
+MAX_CREDENTIAL_BYTES = 768
+MAX_POLICY_BYTES = 16 * 1024
+MAX_TEST_SNAPSHOT_BYTES = 2 * 1024**3
+HTTP_TIMEOUT_SECONDS = 300.0
+IDENTIFIER = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{15,127}\Z")
+TOKEN = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._~-]{15,511}\Z")
+
+
+class ProvisioningError(RuntimeError):
+    pass
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        raise ProvisioningError("OpenBao redirected a local request.")
+
+
+def _validated(value: Any, pattern: re.Pattern[str], description: str) -> str:
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        raise ProvisioningError(f"OpenBao returned an invalid {description}.")
+    return value
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    context = ssl.create_default_context(cafile=str(BAO_CA))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+        urllib.request.HTTPSHandler(context=context),
+    )
+
+
+def _request(
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    token: str | None = None,
+    no_content: bool = False,
+) -> dict[str, Any] | None:
+    if method not in {"GET", "POST"} or not path.startswith("/v1/"):
+        raise ProvisioningError("An internal OpenBao request was rejected.")
+    headers = {"Accept": "application/json", "User-Agent": "provision-openbao-backup/1"}
+    body = None
+    if payload is not None or method == "POST":
+        body = json.dumps(payload or {}, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if token is not None:
+        headers["X-Vault-Token"] = _validated(token, TOKEN, "token")
+    request = urllib.request.Request(BAO_ORIGIN + path, data=body, headers=headers, method=method)
+    try:
+        with _opener().open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            allowed = {200, 204} if no_content else {200}
+            if response.status not in allowed:
+                raise ProvisioningError("OpenBao rejected the operation.")
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except (OSError, ssl.SSLError, urllib.error.URLError) as exc:
+        raise ProvisioningError("The local OpenBao request failed.") from exc
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ProvisioningError("OpenBao returned an oversized response.")
+    if no_content:
+        return None
+    try:
+        result = json.loads(raw)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ProvisioningError("OpenBao returned invalid JSON.") from exc
+    if not isinstance(result, dict):
+        raise ProvisioningError("OpenBao returned an invalid document.")
+    return result
+
+
+def _data(document: dict[str, Any]) -> dict[str, Any]:
+    value = document.get("data")
+    if not isinstance(value, dict):
+        raise ProvisioningError("OpenBao response data is missing.")
+    return value
+
+
+def _validate_root_regular(path: Path, description: str, *, private: bool) -> None:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise ProvisioningError(f"The {description} is unavailable.") from exc
+    forbidden = 0o077 if private else 0o022
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISREG(info.st_mode)
+        or info.st_uid != 0
+        or stat.S_IMODE(info.st_mode) & forbidden
+    ):
+        raise ProvisioningError(f"The {description} has unsafe ownership or mode.")
+
+
+def _read_policy() -> str:
+    _validate_root_regular(POLICY_FILE, "installed backup policy", private=False)
+    descriptor = os.open(POLICY_FILE, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        raw = os.read(descriptor, MAX_POLICY_BYTES + 1)
+        if len(raw) > MAX_POLICY_BYTES or os.read(descriptor, 1):
+            raise ProvisioningError("The installed backup policy is oversized.")
+    finally:
+        os.close(descriptor)
+    try:
+        policy = raw.decode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise ProvisioningError("The installed backup policy is invalid.") from exc
+    paths = re.findall(r'path\s+"([^"]+)"\s*\{([^}]*)\}', policy)
+    if len(paths) != 2 or len({path for path, _body in paths}) != 2:
+        raise ProvisioningError("The installed backup policy is broader than reviewed.")
+    normalized = {
+        path: set(re.findall(r'"(create|read|update|patch|delete|list|sudo)"', body))
+        for path, body in paths
+    }
+    expected = {
+        "sys/storage/raft/snapshot": {"read"},
+        "auth/token/revoke-self": {"update"},
+    }
+    if normalized != expected:
+        raise ProvisioningError("The installed backup policy is broader than reviewed.")
+    return policy
+
+
+def _configure_runtime(human_token: str, policy: str) -> None:
+    _request(
+        "POST",
+        f"/v1/sys/policies/acl/{POLICY_NAME}",
+        payload={"policy": policy},
+        token=human_token,
+        no_content=True,
+    )
+    _request(
+        "POST",
+        f"/v1/auth/approle/role/{ROLE_NAME}",
+        payload={
+            "token_policies": [POLICY_NAME],
+            "bind_secret_id": True,
+            "secret_id_bound_cidrs": ["127.0.0.1/32"],
+            "token_bound_cidrs": ["127.0.0.1/32"],
+            "secret_id_num_uses": 1024,
+            "secret_id_ttl": "720h",
+            "token_ttl": "5m",
+            "token_max_ttl": "5m",
+            "token_explicit_max_ttl": "5m",
+            "token_num_uses": 2,
+            "token_no_default_policy": True,
+            "token_type": "service",
+        },
+        token=human_token,
+        no_content=True,
+    )
+
+
+def _validate_role(document: dict[str, Any]) -> None:
+    role = _data(document)
+    policies = role.get("token_policies")
+    if not isinstance(policies, list) or set(policies) != {POLICY_NAME}:
+        raise ProvisioningError("The backup AppRole policies are not exact.")
+    expected = {
+        "bind_secret_id": True,
+        "token_no_default_policy": True,
+        "secret_id_num_uses": 1024,
+        "token_num_uses": 2,
+        "token_period": 0,
+        "token_type": "service",
+        "secret_id_ttl": 2_592_000,
+        "token_ttl": 300,
+        "token_max_ttl": 300,
+        "token_explicit_max_ttl": 300,
+    }
+    for field, value in expected.items():
+        observed = role.get(field)
+        if isinstance(observed, bool) and not isinstance(value, bool):
+            raise ProvisioningError(f"The backup AppRole field {field} is invalid.")
+        if observed != value:
+            raise ProvisioningError(f"The backup AppRole field {field} is unsafe.")
+    for field in ("secret_id_bound_cidrs", "token_bound_cidrs"):
+        if role.get(field) not in (["127.0.0.1/32"], ["127.0.0.1"]):
+            raise ProvisioningError(f"The backup AppRole field {field} is unsafe.")
+
+
+def _prepare_credstore() -> None:
+    CREDSTORE.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = CREDSTORE.lstat()
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != 0
+        or stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        raise ProvisioningError("The encrypted credential store is unsafe.")
+    os.chmod(CREDSTORE, 0o700)
+
+
+def _credential_paths() -> tuple[Path, ...]:
+    return tuple(CREDSTORE / name for name in CREDENTIAL_NAMES)
+
+
+def _decrypt(name: str, path: Path) -> str:
+    _validate_root_regular(path, "encrypted backup credential", private=True)
+    completed = subprocess.run(
+        ["/usr/bin/systemd-creds", "decrypt", f"--name={name}", str(path), "-"],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0 or len(completed.stdout) > MAX_CREDENTIAL_BYTES:
+        raise ProvisioningError("An encrypted backup credential cannot be decrypted.")
+    try:
+        value = completed.stdout.rstrip(b"\r\n").decode("ascii", errors="strict")
+    except UnicodeError as exc:
+        raise ProvisioningError("An encrypted backup credential is invalid.") from exc
+    return _validated(value, IDENTIFIER, "credential")
+
+
+def _encrypt(name: str, value: str, output: Path) -> None:
+    completed = subprocess.run(
+        [
+            "/usr/bin/systemd-creds",
+            "encrypt",
+            "--with-key=host+tpm2",
+            f"--name={name}",
+            "-",
+            str(output),
+        ],
+        check=False,
+        input=(value + "\n").encode("ascii"),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0:
+        raise ProvisioningError("systemd-creds could not encrypt a backup credential.")
+    _validate_root_regular(output, "new encrypted backup credential", private=False)
+    os.chmod(output, 0o600)
+    _validate_root_regular(output, "new encrypted backup credential", private=True)
+    if not hmac.compare_digest(_decrypt(name, output), value):
+        raise ProvisioningError("An encrypted backup credential failed verification.")
+
+
+def _destroy_accessor(human_token: str, accessor: str) -> None:
+    _request(
+        "POST",
+        f"/v1/auth/approle/role/{ROLE_NAME}/secret-id-accessor/destroy",
+        payload={"secret_id_accessor": _validated(accessor, IDENTIFIER, "accessor")},
+        token=human_token,
+        no_content=True,
+    )
+
+
+def _test_runtime(role_id: str, secret_id: str) -> None:
+    runtime_token: str | None = None
+    operation_error: BaseException | None = None
+    revocation_error: BaseException | None = None
+    try:
+        login = _request(
+            "POST",
+            "/v1/auth/approle/login",
+            payload={"role_id": role_id, "secret_id": secret_id},
+        )
+        auth = login.get("auth") if isinstance(login, dict) else None
+        if not isinstance(auth, dict):
+            raise ProvisioningError("The backup AppRole login failed.")
+        runtime_token = _validated(auth.get("client_token"), TOKEN, "token")
+        if (
+            set(auth.get("token_policies", [])) != {POLICY_NAME}
+            or auth.get("num_uses") != 2
+            or type(auth.get("renewable")) is not bool
+            or isinstance(auth.get("lease_duration"), bool)
+            or not isinstance(auth.get("lease_duration"), int)
+            or not 1 <= auth["lease_duration"] <= 300
+        ):
+            raise ProvisioningError("The backup AppRole issued an unsafe token.")
+        request = urllib.request.Request(
+            BAO_ORIGIN + "/v1/sys/storage/raft/snapshot",
+            headers={
+                "Accept": "application/octet-stream",
+                "X-Vault-Token": runtime_token,
+                "User-Agent": "provision-openbao-backup/1",
+            },
+            method="GET",
+        )
+        try:
+            response = _opener().open(request, timeout=HTTP_TIMEOUT_SECONDS)
+        except (OSError, ssl.SSLError, urllib.error.URLError) as exc:
+            raise ProvisioningError("The backup AppRole cannot read a Raft snapshot.") from exc
+        total = 0
+        with response:
+            if response.status != 200:
+                raise ProvisioningError("The backup AppRole snapshot request was rejected.")
+            while True:
+                block = response.read(1024 * 1024)
+                if not block:
+                    break
+                total += len(block)
+                if total > MAX_TEST_SNAPSHOT_BYTES:
+                    raise ProvisioningError("The runtime-test snapshot exceeded its bound.")
+        if total < 1:
+            raise ProvisioningError("The runtime-test snapshot was empty.")
+    except BaseException as exc:
+        operation_error = exc
+    finally:
+        if runtime_token is not None:
+            try:
+                _request(
+                    "POST",
+                    "/v1/auth/token/revoke-self",
+                    token=runtime_token,
+                    no_content=True,
+                )
+            except BaseException as exc:
+                revocation_error = exc
+            runtime_token = None
+    if operation_error is not None or revocation_error is not None:
+        raise ProvisioningError("The backup AppRole failed its snapshot/revoke test.")
+
+
+def _service_active(name: str) -> bool:
+    return subprocess.run(
+        ["/usr/bin/systemctl", "is-active", "--quiet", name],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ).returncode == 0
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _rollback_local(staging: Path, had_existing: bool) -> None:
+    for name in CREDENTIAL_NAMES:
+        destination = CREDSTORE / name
+        destination.unlink(missing_ok=True)
+        old = staging / ("old-" + name)
+        if had_existing and old.exists():
+            os.replace(old, destination)
+    _fsync_directory(CREDSTORE)
+
+
+def provision() -> None:
+    if os.geteuid() != 0:
+        raise ProvisioningError("Run this provisioner as root.")
+    os.umask(0o077)
+    if any(_service_active(name) for name in SERVICES):
+        raise ProvisioningError("Stop the OpenBao backup service and timer before provisioning.")
+    _validate_root_regular(BAO_CA, "pinned local OpenBao CA", private=False)
+    policy = _read_policy()
+    _prepare_credstore()
+    paths = _credential_paths()
+    existing = tuple(os.path.lexists(path) for path in paths)
+    if any(existing) and not all(existing):
+        raise ProvisioningError("The encrypted backup credential set is incomplete.")
+    for path in paths:
+        if os.path.lexists(path):
+            _validate_root_regular(path, "existing backup credential", private=True)
+
+    confirmation = input(
+        "This provisions or rotates the OpenBao backup AppRole. "
+        "Type PROVISION-OPENBAO-BACKUP to continue: "
+    )
+    if confirmation != "PROVISION-OPENBAO-BACKUP":
+        raise ProvisioningError("Provisioning cancelled.")
+    password = getpass.getpass("OpenBao password for ops-user (never stored): ")
+    if not password:
+        raise ProvisioningError("An OpenBao password is required.")
+
+    human_token: str | None = None
+    old_accessor: str | None = None
+    new_accessor: str | None = None
+    staging: Path | None = None
+    local_installed = False
+    old_destroyed = False
+    operation_error: BaseException | None = None
+    revocation_error: BaseException | None = None
+    try:
+        username = urllib.parse.quote("ops-user", safe="")
+        login = _request(
+            "POST", f"/v1/auth/userpass/login/{username}", payload={"password": password}
+        )
+        password = ""
+        auth = login.get("auth") if isinstance(login, dict) else None
+        if not isinstance(auth, dict):
+            raise ProvisioningError("The human OpenBao login failed.")
+        human_token = _validated(auth.get("client_token"), TOKEN, "token")
+        _configure_runtime(human_token, policy)
+        role = _request("GET", f"/v1/auth/approle/role/{ROLE_NAME}", token=human_token)
+        if not isinstance(role, dict):
+            raise ProvisioningError("The backup AppRole is unavailable.")
+        _validate_role(role)
+        if all(existing):
+            old_accessor = _decrypt(CREDENTIAL_NAMES[2], paths[2])
+
+        role_document = _request(
+            "GET", f"/v1/auth/approle/role/{ROLE_NAME}/role-id", token=human_token
+        )
+        if not isinstance(role_document, dict):
+            raise ProvisioningError("The backup RoleID is unavailable.")
+        role_id = _validated(_data(role_document).get("role_id"), IDENTIFIER, "RoleID")
+        secret_document = _request(
+            "POST", f"/v1/auth/approle/role/{ROLE_NAME}/secret-id", token=human_token
+        )
+        if not isinstance(secret_document, dict):
+            raise ProvisioningError("OpenBao did not issue a backup SecretID.")
+        secret_data = _data(secret_document)
+        secret_id = _validated(secret_data.get("secret_id"), IDENTIFIER, "SecretID")
+        new_accessor = _validated(
+            secret_data.get("secret_id_accessor"), IDENTIFIER, "SecretID accessor"
+        )
+        if secret_data.get("secret_id_ttl") != 2_592_000:
+            raise ProvisioningError("OpenBao returned an unsafe backup SecretID TTL.")
+        _test_runtime(role_id, secret_id)
+
+        staging = Path(tempfile.mkdtemp(prefix=".openbao-backup-", dir=CREDSTORE))
+        os.chmod(staging, 0o700)
+        for name, value in zip(
+            CREDENTIAL_NAMES, (role_id, secret_id, new_accessor), strict=True
+        ):
+            _encrypt(name, value, staging / name)
+        role_id = secret_id = ""
+        if all(existing):
+            for name in CREDENTIAL_NAMES:
+                os.replace(CREDSTORE / name, staging / ("old-" + name))
+        try:
+            for name in CREDENTIAL_NAMES:
+                os.replace(staging / name, CREDSTORE / name)
+            restorecon = Path("/usr/sbin/restorecon")
+            if restorecon.is_file():
+                completed = subprocess.run(
+                    [str(restorecon), "-F", *[str(path) for path in paths]],
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                if completed.returncode != 0:
+                    raise ProvisioningError("SELinux credential relabeling failed.")
+            _fsync_directory(CREDSTORE)
+            local_installed = True
+        except BaseException:
+            _rollback_local(staging, all(existing))
+            raise
+        if old_accessor is not None:
+            _destroy_accessor(human_token, old_accessor)
+            old_accessor = None
+            old_destroyed = True
+    except BaseException as exc:
+        operation_error = exc
+        if human_token is not None and new_accessor is not None:
+            try:
+                _destroy_accessor(human_token, new_accessor)
+                new_accessor = None
+            except BaseException:
+                pass
+        if local_installed and not old_destroyed and staging is not None:
+            try:
+                _rollback_local(staging, all(existing))
+                local_installed = False
+            except BaseException:
+                pass
+    finally:
+        password = ""
+        old_accessor = None
+        if human_token is not None:
+            try:
+                _request(
+                    "POST",
+                    "/v1/auth/token/revoke-self",
+                    token=human_token,
+                    no_content=True,
+                )
+            except BaseException as exc:
+                revocation_error = exc
+        if revocation_error is not None and local_installed:
+            # A human token whose revocation cannot be confirmed is a failed
+            # transaction.  Remove the newly published local credentials so
+            # the timer cannot start with an ambiguously provisioned state.
+            if human_token is not None and new_accessor is not None:
+                try:
+                    _destroy_accessor(human_token, new_accessor)
+                except BaseException:
+                    pass
+            for path in paths:
+                path.unlink(missing_ok=True)
+            try:
+                _fsync_directory(CREDSTORE)
+            except OSError:
+                pass
+            local_installed = False
+        human_token = None
+        new_accessor = None
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
+
+    if operation_error is not None:
+        if isinstance(operation_error, (EOFError, KeyboardInterrupt)):
+            raise operation_error
+        if isinstance(operation_error, ProvisioningError):
+            raise operation_error
+        raise ProvisioningError("OpenBao backup provisioning failed.") from operation_error
+    if revocation_error is not None:
+        raise ProvisioningError(
+            "The human provisioning token revocation could not be confirmed; inspect audit logs."
+        )
+    if not local_installed:
+        raise ProvisioningError("OpenBao backup provisioning did not complete.")
+
+
+def main() -> int:
+    try:
+        provision()
+    except (EOFError, KeyboardInterrupt):
+        print("provision-openbao-backup: cancelled", file=sys.stderr)
+        return 130
+    except ProvisioningError as exc:
+        print(f"provision-openbao-backup: {exc}", file=sys.stderr)
+        return 1
+    print("OpenBao backup AppRole credentials were encrypted for host+TPM2.")
+    print("No credential or snapshot value was displayed or persisted in plaintext.")
+    print("The backup timer remains stopped and must be enabled separately.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

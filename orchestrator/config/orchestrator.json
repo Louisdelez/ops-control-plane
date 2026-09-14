@@ -1,0 +1,378 @@
+{
+  "schema_version": 1,
+  "paths": {
+    "database": "/var/lib/ops-orchestrator/orchestrator.sqlite3",
+    "socket": "/run/ops-orchestrator/api.sock",
+    "finance_socket": "/run/ops-orchestrator-finance/api.sock",
+    "finance_socket_user": "opsfinance",
+    "finance_socket_group": "opsfinance",
+    "finance_client_user": "opsorchestrator",
+    "socket_group": "opsorchestrator-api",
+    "metrics": "/var/lib/node-exporter/textfile/ops-orchestrator.prom",
+    "model_catalogue": "/usr/local/share/ops-control-plane/catalog/model-catalog.v2.json",
+    "provider_integrations": "/usr/local/share/ops-control-plane/catalog/provider-integrations.v1.json"
+  },
+  "access": {
+    "route_grants": [
+      {"user": "ops-user", "projects": ["minecraft", "infra-shared", "network-shared", "monitoring-shared", "backup-shared"], "remote_allowed": true},
+      {"user": "hermesd", "projects": ["minecraft", "infra-shared", "network-shared", "monitoring-shared", "backup-shared"], "remote_allowed": true},
+      {"user": "minecraft-ops", "projects": ["minecraft"], "remote_allowed": true},
+      {"user": "infra-network", "projects": ["infra-shared", "network-shared"], "remote_allowed": true},
+      {"user": "ops-monitor", "projects": ["minecraft", "infra-shared", "network-shared", "monitoring-shared", "backup-shared"], "remote_allowed": true},
+      {"user": "backup-agent", "projects": ["minecraft", "infra-shared", "backup-shared"], "remote_allowed": true},
+      {"user": "deploy-agent", "projects": ["minecraft", "infra-shared"], "remote_allowed": true},
+      {"user": "security-audit", "projects": ["minecraft", "infra-shared", "network-shared", "monitoring-shared", "backup-shared"], "remote_allowed": true}
+    ]
+  },
+  "catalogue_auxiliary_deployments": [
+    "qwen-coder-api",
+    "embedding-api-backup",
+    "reranker-api-backup"
+  ],
+  "catalogue_runtime": {
+    "enabled": true,
+    "account_budget": {"daily_calls": 200, "monthly_calls": 4000, "daily_tokens": 1000000, "monthly_tokens": 20000000, "daily_cost_usd": "2.000000", "monthly_cost_usd": "20.000000", "task_calls": 5, "task_tokens": 300000, "task_cost_usd": "1.000000"}
+  },
+  "provider_accounts": [
+    {
+      "id": "alibaba",
+      "budget": {
+        "daily_calls": 5500,
+        "monthly_calls": 110000,
+        "daily_tokens": 10000000,
+        "monthly_tokens": 200000000,
+        "daily_cost_usd": "4.000000",
+        "monthly_cost_usd": "50.000000",
+        "task_calls": 5,
+        "task_tokens": 300000,
+        "task_cost_usd": "1.000000"
+      }
+    },
+    {
+      "id": "deepseek",
+      "budget": {
+        "daily_calls": 400,
+        "monthly_calls": 8000,
+        "daily_tokens": 2000000,
+        "monthly_tokens": 40000000,
+        "daily_cost_usd": "3.000000",
+        "monthly_cost_usd": "40.000000",
+        "task_calls": 5,
+        "task_tokens": 300000,
+        "task_cost_usd": "1.500000"
+      }
+    }
+  ],
+  "limits": {
+    "max_request_bytes": 65536,
+    "max_section_chars": 6000,
+    "max_context_chars": 12000,
+    "max_context_tokens": 4096,
+    "max_memories": 8,
+    "max_tool_results": 8,
+    "provider_timeout_seconds": 45,
+    "max_iterations": 4,
+    "max_provider_calls": 5,
+    "max_output_tokens": 512,
+    "max_response_bytes": 1048576
+  },
+  "thresholds": {
+    "high_confidence": 0.85,
+    "medium_confidence": 0.60,
+    "simple_complexity": 0.30,
+    "complex_complexity": 0.70,
+    "minimum_provider_confidence": 0.75
+  },
+  "roles": {
+    "ROLE_TINY": [
+      {
+        "id": "qwen-utility-api",
+        "account_id": "alibaba",
+        "capability_profile": "utility_flash",
+        "kind": "openai_chat",
+        "location": "remote",
+        "enabled": true,
+        "activation_env": "OPS_ORCHESTRATOR_ENABLE_QWEN",
+        "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "required_path": "/compatible-mode/v1",
+        "model": "qwen3.7-flash-2026-07-15",
+        "api_key_file_env": "QWEN_API_KEY_FILE",
+        "price_tiers": [
+          {"max_input_tokens": 32000, "input_price_per_million_usd": "0.028000", "output_price_per_million_usd": "0.110000"},
+          {"max_input_tokens": 256000, "input_price_per_million_usd": "0.083000", "output_price_per_million_usd": "0.330000"},
+          {"max_input_tokens": 1000000, "input_price_per_million_usd": "0.165000", "output_price_per_million_usd": "0.660000"}
+        ],
+        "chat_family": "qwen",
+        "chat_dialect": "alibaba",
+        "thinking_mode": "disabled",
+        "keep_alive": "0",
+        "budget": {
+          "daily_calls": 5000,
+          "monthly_calls": 100000,
+          "daily_tokens": 5000000,
+          "monthly_tokens": 100000000,
+          "daily_cost_usd": "1.000000",
+          "monthly_cost_usd": "10.000000",
+          "mission_cost_usd": "0.050000"
+        }
+      }
+    ],
+    "ROLE_LOCAL_OPS": [
+      {
+        "id": "alibaba-deepseek-ops-api",
+        "account_id": "alibaba",
+        "capability_profile": "reasoning_economy",
+        "kind": "openai_chat",
+        "location": "remote",
+        "enabled": true,
+        "activation_env": "OPS_ORCHESTRATOR_ENABLE_QWEN",
+        "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "required_path": "/compatible-mode/v1",
+        "model": "deepseek-v4-flash",
+        "api_key_file_env": "QWEN_API_KEY_FILE",
+        "input_price_per_million_usd": "0.138000",
+        "output_price_per_million_usd": "0.275000",
+        "chat_family": "deepseek",
+        "chat_dialect": "alibaba",
+        "thinking_mode": "disabled",
+        "keep_alive": "0",
+        "budget": {
+          "daily_calls": 1000,
+          "monthly_calls": 25000,
+          "daily_tokens": 4000000,
+          "monthly_tokens": 80000000,
+          "daily_cost_usd": "1.000000",
+          "monthly_cost_usd": "15.000000",
+          "mission_cost_usd": "0.250000"
+        }
+      },
+      {
+        "id": "qwen-ops-api",
+        "account_id": "alibaba",
+        "capability_profile": "balanced_economy",
+        "kind": "openai_chat",
+        "location": "remote",
+        "enabled": true,
+        "activation_env": "OPS_ORCHESTRATOR_ENABLE_QWEN",
+        "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "required_path": "/compatible-mode/v1",
+        "model": "qwen3.7-plus-2026-05-26",
+        "api_key_file_env": "QWEN_API_KEY_FILE",
+        "price_tiers": [
+          {"max_input_tokens": 256000, "input_price_per_million_usd": "0.276000", "output_price_per_million_usd": "1.101000"},
+          {"max_input_tokens": 1000000, "input_price_per_million_usd": "0.826000", "output_price_per_million_usd": "3.301000"}
+        ],
+        "chat_family": "qwen",
+        "chat_dialect": "alibaba",
+        "thinking_mode": "disabled",
+        "keep_alive": "0",
+        "budget": {
+          "daily_calls": 1000,
+          "monthly_calls": 25000,
+          "daily_tokens": 4000000,
+          "monthly_tokens": 80000000,
+          "daily_cost_usd": "2.000000",
+          "monthly_cost_usd": "25.000000",
+          "mission_cost_usd": "0.250000"
+        }
+      },
+      {
+        "id": "deepseek-ops-api",
+        "account_id": "deepseek",
+        "capability_profile": "reasoning_economy",
+        "kind": "openai_chat",
+        "location": "remote",
+        "enabled": true,
+        "activation_env": "OPS_ORCHESTRATOR_ENABLE_DEEPSEEK",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-v4-flash",
+        "api_key_file_env": "DEEPSEEK_API_KEY_FILE",
+        "input_price_per_million_usd": "0.440000",
+        "output_price_per_million_usd": "1.320000",
+        "chat_family": "deepseek",
+        "chat_dialect": "deepseek",
+        "thinking_mode": "disabled",
+        "keep_alive": "0",
+        "budget": {
+          "daily_calls": 500,
+          "monthly_calls": 10000,
+          "daily_tokens": 2000000,
+          "monthly_tokens": 40000000,
+          "daily_cost_usd": "2.000000",
+          "monthly_cost_usd": "25.000000",
+          "mission_cost_usd": "0.500000"
+        }
+      }
+    ],
+    "ROLE_REASONING": [
+      {
+        "id": "deepseek-reasoning",
+        "account_id": "deepseek",
+        "capability_profile": "advanced_reasoning",
+        "kind": "openai_chat",
+        "location": "remote",
+        "enabled": true,
+        "activation_env": "OPS_ORCHESTRATOR_ENABLE_DEEPSEEK",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-v4-pro",
+        "api_key_file_env": "DEEPSEEK_API_KEY_FILE",
+        "input_price_per_million_usd": "1.320000",
+        "output_price_per_million_usd": "3.960000",
+        "chat_family": "deepseek",
+        "chat_dialect": "deepseek",
+        "thinking_mode": "disabled",
+        "keep_alive": "0",
+        "budget": {
+          "daily_calls": 30,
+          "monthly_calls": 500,
+          "daily_tokens": 300000,
+          "monthly_tokens": 5000000,
+          "daily_cost_usd": "2.000000",
+          "monthly_cost_usd": "25.000000",
+          "mission_cost_usd": "0.750000"
+        }
+      }
+    ],
+    "ROLE_PREMIUM": [
+      {
+        "id": "qwen-reasoning-api",
+        "account_id": "alibaba",
+        "capability_profile": "advanced_reasoning",
+        "kind": "openai_chat",
+        "location": "remote",
+        "enabled": true,
+        "activation_env": "OPS_ORCHESTRATOR_ENABLE_QWEN",
+        "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "required_path": "/compatible-mode/v1",
+        "model": "qwen3.8-max-0902",
+        "api_key_file_env": "QWEN_API_KEY_FILE",
+        "input_price_per_million_usd": "1.650000",
+        "output_price_per_million_usd": "4.951000",
+        "chat_family": "qwen",
+        "chat_dialect": "alibaba",
+        "thinking_mode": "disabled",
+        "keep_alive": "0",
+        "budget": {
+          "daily_calls": 30,
+          "monthly_calls": 500,
+          "daily_tokens": 300000,
+          "monthly_tokens": 5000000,
+          "daily_cost_usd": "2.000000",
+          "monthly_cost_usd": "25.000000",
+          "mission_cost_usd": "0.750000"
+        }
+      }
+    ],
+    "ROLE_CODER": [
+      {
+        "id": "qwen-coder-api",
+        "account_id": "alibaba",
+        "capability_profile": "coder_economy",
+        "kind": "openai_chat",
+        "location": "remote",
+        "enabled": true,
+        "activation_env": "OPS_ORCHESTRATOR_ENABLE_QWEN",
+        "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "required_path": "/compatible-mode/v1",
+        "model": "qwen3-coder-flash-2025-07-28",
+        "api_key_file_env": "QWEN_API_KEY_FILE",
+        "price_tiers": [
+          {"max_input_tokens": 32000, "input_price_per_million_usd": "0.144000", "output_price_per_million_usd": "0.574000"},
+          {"max_input_tokens": 128000, "input_price_per_million_usd": "0.216000", "output_price_per_million_usd": "0.861000"},
+          {"max_input_tokens": 256000, "input_price_per_million_usd": "0.359000", "output_price_per_million_usd": "1.434000"},
+          {"max_input_tokens": 1000000, "input_price_per_million_usd": "0.717000", "output_price_per_million_usd": "3.584000"}
+        ],
+        "chat_family": "qwen",
+        "chat_dialect": "alibaba",
+        "thinking_mode": "disabled",
+        "keep_alive": "0",
+        "budget": {
+          "daily_calls": 50,
+          "monthly_calls": 1000,
+          "daily_tokens": 500000,
+          "monthly_tokens": 10000000,
+          "daily_cost_usd": "1.000000",
+          "monthly_cost_usd": "10.000000",
+          "mission_cost_usd": "0.250000"
+        }
+      },
+      {
+        "id": "deepseek-coder-api",
+        "account_id": "deepseek",
+        "capability_profile": "advanced_reasoning",
+        "kind": "openai_chat",
+        "location": "remote",
+        "enabled": true,
+        "activation_env": "OPS_ORCHESTRATOR_ENABLE_DEEPSEEK",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-v4-pro",
+        "api_key_file_env": "DEEPSEEK_API_KEY_FILE",
+        "input_price_per_million_usd": "1.320000",
+        "output_price_per_million_usd": "3.960000",
+        "chat_family": "deepseek",
+        "chat_dialect": "deepseek",
+        "thinking_mode": "disabled",
+        "keep_alive": "0",
+        "budget": {
+          "daily_calls": 10,
+          "monthly_calls": 100,
+          "daily_tokens": 200000,
+          "monthly_tokens": 2000000,
+          "daily_cost_usd": "2.000000",
+          "monthly_cost_usd": "20.000000",
+          "mission_cost_usd": "1.000000"
+        }
+      }
+    ],
+    "ROLE_EMBEDDING": [
+      {
+        "id": "embedding-api-backup",
+        "capability_profile": "unknown_family",
+        "kind": "openai_embedding",
+        "location": "remote",
+        "enabled": true,
+        "activation_env": "OPS_ORCHESTRATOR_ENABLE_EMBEDDING_API",
+        "base_url_env": "EMBEDDING_API_BASE_URL",
+        "model_env": "EMBEDDING_API_MODEL",
+        "api_key_file_env": "EMBEDDING_API_KEY_FILE",
+        "input_price_env": "EMBEDDING_INPUT_PRICE_USD_PER_MILLION",
+        "output_price_env": "EMBEDDING_OUTPUT_PRICE_USD_PER_MILLION",
+        "keep_alive": "0",
+        "budget": {
+          "daily_calls": 100,
+          "monthly_calls": 2000,
+          "daily_tokens": 500000,
+          "monthly_tokens": 10000000,
+          "daily_cost_usd": "0.250000",
+          "monthly_cost_usd": "3.000000",
+          "mission_cost_usd": "0.050000"
+        }
+      }
+    ],
+    "ROLE_RERANKER": [
+      {
+        "id": "reranker-api-backup",
+        "capability_profile": "unknown_family",
+        "kind": "http_rerank",
+        "location": "remote",
+        "enabled": true,
+        "activation_env": "OPS_ORCHESTRATOR_ENABLE_RERANKER_API",
+        "base_url_env": "RERANKER_API_BASE_URL",
+        "model_env": "RERANKER_API_MODEL",
+        "api_key_file_env": "RERANKER_API_KEY_FILE",
+        "input_price_env": "RERANKER_INPUT_PRICE_USD_PER_MILLION",
+        "output_price_env": "RERANKER_OUTPUT_PRICE_USD_PER_MILLION",
+        "keep_alive": "0",
+        "budget": {
+          "daily_calls": 100,
+          "monthly_calls": 2000,
+          "daily_tokens": 500000,
+          "monthly_tokens": 10000000,
+          "daily_cost_usd": "0.250000",
+          "monthly_cost_usd": "3.000000",
+          "mission_cost_usd": "0.050000"
+        }
+      }
+    ]
+  }
+}

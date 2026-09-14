@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-begin-corrective-bootstrap"
+description = "Enables the begin_corrective_bootstrap command without any pre-configured scope."
+commands.allow = ["begin_corrective_bootstrap"]
+
+[[permission]]
+identifier = "deny-begin-corrective-bootstrap"
+description = "Denies the begin_corrective_bootstrap command without any pre-configured scope."
+commands.deny = ["begin_corrective_bootstrap"]

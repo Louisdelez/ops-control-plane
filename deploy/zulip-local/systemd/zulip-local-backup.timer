@@ -1,0 +1,11 @@
+[Unit]
+Description=Create a daily encrypted local Zulip snapshot
+
+[Timer]
+OnCalendar=*-*-* 03:40:00
+RandomizedDelaySec=20min
+Persistent=true
+Unit=zulip-local-backup.service
+
+[Install]
+WantedBy=timers.target

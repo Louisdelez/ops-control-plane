@@ -1,0 +1,14 @@
+[Unit]
+Description=Encrypted native Zulip backup and isolated PostgreSQL restore verification
+After=docker.service
+Requires=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/ops-zulip-backup.py
+UMask=0077
+TimeoutStartSec=10min
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/ops-zulip-backups

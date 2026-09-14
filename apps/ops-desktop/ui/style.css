@@ -1,0 +1,13 @@
+*{box-sizing:border-box}body{margin:0;height:56px;display:flex;align-items:center;gap:24px;padding:0 18px;background:#172321;color:#dae4e0;font:13px system-ui;overflow:hidden}.brand{display:flex;align-items:center;gap:10px;color:#d8f1df;font-size:21px;font-weight:700;min-width:156px}.brand span{font-size:13px;letter-spacing:2px;color:#fff}nav{display:flex;align-items:center;gap:4px;height:100%}button{display:flex;align-items:center;gap:9px;min-width:124px;height:38px;padding:0 16px;border:1px solid transparent;border-radius:7px;background:transparent;color:#b8c9c2;font:inherit;font-weight:500;cursor:pointer;transition:background .15s,color .15s}button:hover{background:#263b34;color:#fff}button[aria-selected=true]{color:#172b23;background:#edf5ef;border-color:#edf5ef;box-shadow:0 1px 3px #0002}button:focus-visible{outline:2px solid #b5e7c6;outline-offset:2px}.icon{display:grid;place-items:center;width:21px;height:21px;font-size:12px;font-weight:700;border:1px solid currentColor;border-radius:5px;opacity:.8}#error{font-size:11px;color:#ffd0c6;margin-left:auto;max-width:180px}button[aria-selected=false] .icon{border-color:#657c70}@media(max-width:950px){body{gap:12px}.brand{min-width:132px}button{min-width:112px;padding:0 12px}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+.app-icon{display:block;flex:none;opacity:.85;filter:brightness(0) invert(.84)}button[aria-selected=true] .app-icon{filter:none;opacity:.78}.brand>img{filter:brightness(0) invert(.95)}
+
+#reload{min-width:38px;width:38px;padding:0;justify-content:center;font-size:23px}#reload[hidden]{display:none}
+
+
+@media(max-width:1100px){body{gap:8px}.brand{min-width:70px}nav button{min-width:90px;padding:0 8px}}
+
+#settings{margin-left:auto;min-width:38px;width:38px;padding:0;justify-content:center;flex-shrink:0}#error:empty{display:none}
+
+#settings[aria-pressed="true"]{background:#eaf4ed;color:#234f3c}
+
+body{gap:12px}.brand{min-width:74px;flex-shrink:0}nav{flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}nav::-webkit-scrollbar{display:none}nav button{min-width:100px;flex-shrink:0;padding:0 12px}button[hidden]{display:none!important}#browser{min-width:32px;width:32px;padding:0;justify-content:center;font-size:21px;flex-shrink:0}#reload{flex-shrink:0}#error{flex-shrink:1;font-size:10px;max-width:140px}#settings{margin-left:0}.provider-mark{font-size:13px;font-weight:750;border:1px solid #81988c;border-radius:5px;width:20px;height:20px;display:grid;place-items:center}.provider-tab{border-left-color:#384b42}

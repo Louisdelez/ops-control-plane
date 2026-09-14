@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Unseal the local OpenBao instance from systemd credentials.
+
+The two Shamir shares are read only from systemd's in-memory credential
+directory.  They are never accepted as arguments or environment variables and
+are never written to logs.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import ssl
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+
+ADDRESS = "https://127.0.0.1:8200"
+CA_FILE = "/etc/openbao.d/tls/ca.crt"
+SHARE_NAMES = ("openbao-unseal-share-1", "openbao-unseal-share-2")
+
+
+class UnsealError(RuntimeError):
+    pass
+
+
+def _request(path: str, payload: dict[str, str] | None = None) -> dict:
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        f"{ADDRESS}{path}",
+        data=body,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="GET" if body is None else "POST",
+    )
+    context = ssl.create_default_context(cafile=CA_FILE)
+    try:
+        with urllib.request.urlopen(request, timeout=5, context=context) as response:
+            raw = response.read(256 * 1024)
+    except urllib.error.HTTPError as exc:
+        # OpenBao deliberately returns non-2xx health statuses while sealed.
+        raw = exc.read(256 * 1024)
+        if not raw:
+            raise UnsealError(f"OpenBao HTTP error {exc.code}") from exc
+    except (OSError, urllib.error.URLError) as exc:
+        raise UnsealError("OpenBao API is unavailable") from exc
+    try:
+        result = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise UnsealError("OpenBao returned an invalid response") from exc
+    if not isinstance(result, dict):
+        raise UnsealError("OpenBao returned an invalid response object")
+    return result
+
+
+def _wait_for_health() -> dict:
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            return _request("/v1/sys/health")
+        except UnsealError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(1)
+
+
+def _read_share(directory: Path, name: str) -> str:
+    path = directory / name
+    try:
+        value = path.read_text(encoding="ascii").strip()
+    except OSError as exc:
+        raise UnsealError(f"systemd credential {name!r} is unavailable") from exc
+    if not 16 <= len(value) <= 4096 or any(ch.isspace() for ch in value):
+        raise UnsealError(f"systemd credential {name!r} is malformed")
+    return value
+
+
+def main() -> int:
+    credential_dir = os.environ.get("CREDENTIALS_DIRECTORY")
+    if not credential_dir:
+        print("openbao-auto-unseal: no systemd credential directory", file=sys.stderr)
+        return 1
+    try:
+        status = _wait_for_health()
+        if not status.get("initialized"):
+            raise UnsealError("OpenBao is not initialized")
+        if not status.get("sealed"):
+            print("openbao-auto-unseal: OpenBao is already unsealed")
+            return 0
+
+        directory = Path(credential_dir)
+        for name in SHARE_NAMES:
+            share = _read_share(directory, name)
+            status = _request("/v1/sys/unseal", {"key": share})
+            share = ""  # Drop the Python reference as soon as possible.
+            if not status.get("sealed"):
+                break
+
+        if status.get("sealed"):
+            raise UnsealError("the TPM-bound shares did not reach the threshold")
+        print("openbao-auto-unseal: OpenBao unsealed successfully")
+        return 0
+    except UnsealError as exc:
+        print(f"openbao-auto-unseal: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

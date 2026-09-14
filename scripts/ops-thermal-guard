@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+threshold_c=${OPS_THERMAL_STOP_C:-90}
+interval_s=${OPS_THERMAL_INTERVAL_S:-5}
+state_dir=/run/ops-thermal-guard
+
+read_peak_c() {
+  local path raw peak=-1
+  shopt -s nullglob
+  for path in /sys/class/thermal/thermal_zone*/temp /sys/class/hwmon/hwmon*/temp*_input; do
+    [[ -r $path ]] || continue
+    { IFS= read -r raw <"$path"; } 2>/dev/null || continue
+    [[ $raw =~ ^[0-9]+$ ]] || continue
+    (( raw > peak )) && peak=$raw
+  done
+  if (( peak < 0 )); then
+    return 1
+  fi
+  awk -v milli="$peak" 'BEGIN { printf "%.3f\n", milli / 1000 }'
+}
+
+mkdir -p "$state_dir"
+while :; do
+  peak=$(read_peak_c || true)
+  if [[ -n $peak ]]; then
+    printf '%s\n' "$peak" >"$state_dir/temperature_c"
+    if awk -v peak="$peak" -v limit="$threshold_c" 'BEGIN { exit !(peak >= limit) }'; then
+      if systemctl is-active --quiet ollama.service; then
+        printf '%s temperature_c=%s threshold_c=%s\n' \
+          "$(date --iso-8601=seconds)" "$peak" "$threshold_c" >"$state_dir/tripped"
+        logger -p daemon.crit -t ops-thermal-guard \
+          "thermal ceiling reached (${peak} C); stopping ollama.service"
+        systemctl stop ollama.service
+      fi
+    fi
+  fi
+  sleep "$interval_s"
+done

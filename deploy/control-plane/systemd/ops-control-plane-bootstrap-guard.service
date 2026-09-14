@@ -1,0 +1,34 @@
+[Unit]
+Description=Restore the reviewed OpenBao listener before local bootstrap recovery
+DefaultDependencies=no
+After=local-fs.target
+Before=openbao.service
+ConditionPathExists=/var/lib/ops-control-plane-bootstrap/transaction.json
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/libexec/ops-control-plane-bootstrap --restore-openbao
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/openbao.d /var/lib/ops-control-plane-bootstrap /var/lib/openbao /run/lock
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+RequiredBy=openbao.service

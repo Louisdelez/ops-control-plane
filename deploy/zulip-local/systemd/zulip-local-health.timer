@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the local Zulip health check every five minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=zulip-local-health.service
+
+[Install]
+WantedBy=timers.target

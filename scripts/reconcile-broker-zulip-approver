@@ -1,0 +1,240 @@
+#!/usr/bin/python3
+"""Render and verify the one human Zulip approver in the broker policy.
+
+The owner identifier is non-secret but is persisted root-only with the durable
+bootstrap proof.  This helper accepts no path or identifier from argv, so a
+future broker reinstall can repeat the exact rendering without widening the
+policy from untrusted input.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+from typing import Any
+
+
+STATE_PATH = Path("/var/lib/ops-control-plane-bootstrap/zulip-approver.json")
+DEFAULT_POLICY = Path("/opt/ops-broker/defaults/actions.yaml")
+INSTALLED_POLICY = Path("/etc/ops-broker/actions.yaml")
+BROKER_PYTHON = Path("/opt/ops-broker/venv/bin/python")
+EMPTY_LINE = b"  authorized_actor_ids: []"
+SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+RELEASE_RE = re.compile(r"\A[a-z0-9][a-z0-9._-]{1,127}\Z")
+
+
+class ReconcileError(RuntimeError):
+    pass
+
+
+def _read_root_file(path: Path, maximum: int, *, private: bool) -> bytes:
+    try:
+        before = os.lstat(path)
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise ReconcileError("A required approver document is unavailable.") from exc
+    try:
+        opened = os.fstat(descriptor)
+        forbidden = 0o077 if private else 0o022
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != 0
+            or stat.S_IMODE(opened.st_mode) & forbidden
+            or opened.st_dev != before.st_dev
+            or opened.st_ino != before.st_ino
+            or opened.st_size > maximum
+        ):
+            raise ReconcileError("A required approver document is unsafe.")
+        raw = os.read(descriptor, maximum + 1)
+        if len(raw) > maximum or os.read(descriptor, 1):
+            raise ReconcileError("A required approver document is oversized.")
+        return raw
+    finally:
+        os.close(descriptor)
+
+
+def load_state() -> dict[str, Any]:
+    try:
+        document = json.loads(_read_root_file(STATE_PATH, 16 * 1024, private=True))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ReconcileError("The durable approver document is invalid.") from exc
+    if not isinstance(document, dict) or set(document) != {
+        "schema_version",
+        "release_id",
+        "source_tree_sha256",
+        "realm_url",
+        "zulip_user_id",
+        "actor_id",
+        "recorded_at",
+    }:
+        raise ReconcileError("The durable approver document has an unexpected schema.")
+    user_id = document.get("zulip_user_id")
+    if (
+        document.get("schema_version") != 1
+        or not isinstance(document.get("release_id"), str)
+        or not RELEASE_RE.fullmatch(document["release_id"])
+        or not isinstance(document.get("source_tree_sha256"), str)
+        or not SHA256_RE.fullmatch(document["source_tree_sha256"])
+        or document.get("realm_url") != "https://zulip.ops.local:8443"
+        or isinstance(user_id, bool)
+        or not isinstance(user_id, int)
+        or not 1 <= user_id <= 9_223_372_036_854_775_807
+        or document.get("actor_id") != f"zulip:{user_id}"
+        or isinstance(document.get("recorded_at"), bool)
+        or not isinstance(document.get("recorded_at"), int)
+        or document["recorded_at"] <= 0
+    ):
+        raise ReconcileError("The durable approver document is invalid.")
+    return document
+
+
+def render_policy(defaults: bytes, actor_id: str) -> bytes:
+    if defaults.count(EMPTY_LINE) != 1:
+        raise ReconcileError("The reviewed fail-closed policy template is ambiguous.")
+    if b"authorized_actor_ids:" in defaults.replace(EMPTY_LINE, b""):
+        raise ReconcileError("The reviewed fail-closed policy template is ambiguous.")
+    rendered = defaults.replace(
+        EMPTY_LINE,
+        b"  authorized_actor_ids: [\"" + actor_id.encode("ascii") + b"\"]",
+    )
+    if rendered == defaults:
+        raise ReconcileError("The approver policy was not rendered.")
+    return rendered
+
+
+def _atomic_policy(payload: bytes) -> None:
+    try:
+        group = pwd.getpwnam("opsbroker").pw_gid
+    except KeyError as exc:
+        raise ReconcileError("The broker identity is unavailable.") from exc
+    parent = INSTALLED_POLICY.parent
+    try:
+        parent_info = os.lstat(parent)
+    except OSError as exc:
+        raise ReconcileError("The broker configuration directory is unavailable.") from exc
+    if (
+        not stat.S_ISDIR(parent_info.st_mode)
+        or stat.S_ISLNK(parent_info.st_mode)
+        or parent_info.st_uid != 0
+        or stat.S_IMODE(parent_info.st_mode) & 0o007
+    ):
+        raise ReconcileError("The broker configuration directory is unsafe.")
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".actions.bootstrap.", dir=parent)
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o640)
+        os.fchown(descriptor, 0, group)
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise ReconcileError("The approver policy write was incomplete.")
+            view = view[written:]
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(temporary, INSTALLED_POLICY)
+        parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
+def validate_broker_python() -> None:
+    # Keep the venv path when executing Python: resolving it for execution
+    # would lose pyvenv.cfg and the broker's installed packages.
+    current = BROKER_PYTHON
+    trusted_system = Path("/usr/bin/python3").resolve(strict=True)
+    for _ in range(5):
+        for parent in current.parents:
+            info = parent.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                raise ReconcileError("The broker interpreter parent is unsafe.")
+        info = current.lstat()
+        if info.st_uid != 0:
+            raise ReconcileError("The broker interpreter is not root-owned.")
+        if stat.S_ISLNK(info.st_mode):
+            target = Path(os.readlink(current))
+            if not target.is_absolute():
+                target = current.parent / target
+            if target.parent not in {BROKER_PYTHON.parent, Path("/usr/bin"), Path("/usr/sbin"), Path("/bin"), Path("/sbin")} or not re.fullmatch(r"python(?:3(?:\.[0-9]+)?)?", target.name):
+                raise ReconcileError("The broker interpreter link is outside its reviewed paths.")
+            current = target.parent.resolve(strict=True) / target.name
+            continue
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o022 or not info.st_mode & 0o111:
+            raise ReconcileError("The broker interpreter has unsafe metadata.")
+        if current != BROKER_PYTHON and current != trusted_system:
+            raise ReconcileError("The broker interpreter target differs from system Python.")
+        return
+    raise ReconcileError("The broker interpreter link chain is invalid.")
+
+
+def verify_policy(expected: bytes, actor_id: str) -> None:
+    observed = _read_root_file(INSTALLED_POLICY, 64 * 1024, private=False)
+    if not __import__("hmac").compare_digest(observed, expected):
+        raise ReconcileError("The installed broker approver policy differs from its rendering.")
+    validate_broker_python()
+    program = (
+        "from pathlib import Path; from ops_broker.policy import ActionPolicy; "
+        "p=ActionPolicy.load(Path(" + repr(str(INSTALLED_POLICY)) + ")); "
+        "raise SystemExit(0 if p.approval_actor_ids == {" + repr(actor_id) + "} else 1)"
+    )
+    completed = subprocess.run(
+        [str(BROKER_PYTHON), "-I", "-c", program],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env={"PATH": "/usr/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+        timeout=15,
+    )
+    if completed.returncode != 0:
+        raise ReconcileError("The broker rejected its rendered approver policy.")
+
+
+def reconcile(*, mutate: bool) -> None:
+    if os.geteuid() != 0:
+        raise ReconcileError("Run this helper as root.")
+    state = load_state()
+    defaults = _read_root_file(DEFAULT_POLICY, 64 * 1024, private=False)
+    actor_id = str(state["actor_id"])
+    rendered = render_policy(defaults, actor_id)
+    if mutate:
+        if INSTALLED_POLICY.exists() or INSTALLED_POLICY.is_symlink():
+            current = _read_root_file(INSTALLED_POLICY, 64 * 1024, private=False)
+            if current not in {defaults, rendered}:
+                raise ReconcileError("Refusing to overwrite a divergent broker policy.")
+        _atomic_policy(rendered)
+    verify_policy(rendered, actor_id)
+    # Emit only a stable digest, never the numeric owner identifier.
+    print(json.dumps({"ok": True, "policy_sha256": hashlib.sha256(rendered).hexdigest()}))
+
+
+def main() -> int:
+    arguments = sys.argv[1:]
+    if arguments not in (["apply"], ["verify"]):
+        print("Usage: reconcile-broker-zulip-approver apply|verify", file=sys.stderr)
+        return 64
+    try:
+        reconcile(mutate=arguments == ["apply"])
+        return 0
+    except ReconcileError:
+        print('{"error":"approver_reconciliation_failed","ok":false}', file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

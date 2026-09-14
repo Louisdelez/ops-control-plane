@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Ops memory consolidation and Qdrant reconciliation
+
+[Timer]
+OnCalendar=*-*-* 04:17:00 Europe/Zurich
+RandomizedDelaySec=15min
+Persistent=true
+AccuracySec=1min
+Unit=ops-memory-maintenance.service
+
+[Install]
+WantedBy=timers.target

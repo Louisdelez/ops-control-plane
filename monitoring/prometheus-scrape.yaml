@@ -1,0 +1,9 @@
+# Merge into the shared Prometheus only after the Dell WireGuard peer exists.
+# Replace the target with the Dell's assigned WireGuard address; never use its LAN IP.
+- job_name: dell-ops
+  scrape_interval: 30s
+  static_configs:
+    - targets: [DELL_WIREGUARD_IP:9100]
+      labels:
+        environment: operations
+        owner: infra-shared

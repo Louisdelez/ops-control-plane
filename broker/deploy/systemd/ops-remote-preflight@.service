@@ -1,0 +1,24 @@
+[Unit]
+Description=Read-only SSH system state for reviewed Ops resource %i
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/ops-runbooks/remote-preflight-worker %i
+TimeoutStartSec=25
+KillMode=control-group
+UMask=0077
+ProtectSystem=strict
+ReadWritePaths=/run/ops-remote-preflight
+RuntimeDirectory=ops-remote-preflight
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+MemoryMax=128M
+TasksMax=32
+LimitFSIZE=64K
+StandardOutput=null
+StandardError=null

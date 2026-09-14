@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "release_id": "example-1.0.0-build-1",
+  "target_id": "replace-with-reviewed-target",
+  "project": "minecraft",
+  "version": "1.0.0",
+  "commit": "0123456789abcdef",
+  "build": "build-1",
+  "change_ticket": "mission-uuid-or-change-id",
+  "artifact": {
+    "path": "/var/lib/ops-v1/incoming/example-1.0.0.tar",
+    "format": "tar",
+    "sha256": "replace-with-64-lowercase-hex-characters"
+  },
+  "migration": "none",
+  "persistent_paths": ["world", "config/runtime"]
+}

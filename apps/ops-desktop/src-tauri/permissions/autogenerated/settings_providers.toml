@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-settings-providers"
+description = "Enables the settings_providers command without any pre-configured scope."
+commands.allow = ["settings_providers"]
+
+[[permission]]
+identifier = "deny-settings-providers"
+description = "Denies the settings_providers command without any pre-configured scope."
+commands.deny = ["settings_providers"]

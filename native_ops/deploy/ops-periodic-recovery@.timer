@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily recovery copy to approved destination %i
+
+[Timer]
+OnCalendar=*-*-* 05:30:00
+RandomizedDelaySec=5min
+Persistent=yes
+
+[Install]
+WantedBy=timers.target

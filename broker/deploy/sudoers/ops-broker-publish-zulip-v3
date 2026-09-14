@@ -1,0 +1,1 @@
+opsbroker ALL=(root) NOPASSWD: /usr/local/libexec/ops-runbooks/publish-zulip-v3 bc5c0b662f0bfe290e938c0ec2d87d0ad68a702dcb2956226e05b6eb27f66c9a

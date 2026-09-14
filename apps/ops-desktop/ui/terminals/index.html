@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ops — Terminaux</title><link rel="stylesheet" href="vendor/xterm.css"><link rel="stylesheet" href="style.css"></head>
+<body><main>
+<header class="workspace-bar"><h1>Terminaux <span id="count">0 / 4</span></h1><div class="new-terminal"><button id="add" aria-label="Nouveau terminal" aria-expanded="false" aria-controls="launcher" title="Nouveau terminal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><div id="launcher" hidden><p>Ouvrir un terminal</p><button data-tool="codex"><strong>Codex</strong><span>Compte ChatGPT</span></button><button data-tool="claude"><strong>Claude Code</strong><span>Compte Claude</span></button></div></div></header>
+<div id="error" role="alert"></div>
+<div id="empty"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 6 6 6-6 6m9 0h5"/></svg><h2>Un terminal, puis un autre.</h2><p>Ajoute Codex ou Claude Code avec le <strong>+</strong> en haut.<br>Tes terminaux restent ouverts côte à côte.</p></div>
+<div id="terminals" aria-label="Terminaux ouverts"></div>
+<footer><span id="session-status" role="status">Prêt</span><span>Ctrl+C interrompre · Ctrl+Maj+C copier</span></footer>
+</main><script src="vendor/xterm.js"></script><script src="vendor/addon-fit.js"></script><script src="app.js"></script></body></html>

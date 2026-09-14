@@ -1,0 +1,481 @@
+#!/usr/bin/python3
+"""Launch the Zulip bridge with one narrowly scoped OpenBao secret.
+
+The service receives only an AppRole RoleID and SecretID through systemd's
+encrypted credential mechanism.  This launcher logs in against the pinned
+loopback OpenBao endpoint, performs one exact KV v2 read, validates every
+field, revokes the short-lived token, and only then replaces itself with the
+unprivileged bridge process.  It never renders a dotenv file or prints a
+secret.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+from pathlib import Path
+import pwd
+import re
+import ssl
+import stat
+import sys
+from typing import Any, Callable, Mapping
+from urllib.parse import urlsplit
+import urllib.error
+import urllib.request
+
+
+BAO_ORIGIN = "https://127.0.0.1:8200"
+BAO_CA = "/etc/pki/ca-trust/source/anchors/openbao-local.crt"
+KV_PATH = "/v1/kv-infra-shared/data/zulip/bot"
+SERVICE_USER = "zulipbridge"
+SERVICE_NAME = "zulip-approval-bridge.service"
+CREDENTIALS_DIRECTORY = Path(f"/run/credentials/{SERVICE_NAME}")
+ROLE_ID_CREDENTIAL = "zulip-openbao-role-id"
+SECRET_ID_CREDENTIAL = "zulip-openbao-secret-id"
+BRIDGE_EXECUTABLE = Path(
+    "/opt/ops-control-plane/bridges/zulip/.venv/bin/zulip-approval-bridge"
+)
+
+MAX_CREDENTIAL_BYTES = 256
+MAX_RESPONSE_BYTES = 64 * 1024
+HTTP_TIMEOUT_SECONDS = 1.0
+
+_IDENTIFIER_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{15,127}\Z")
+_TOKEN_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._~-]{15,511}\Z")
+_SECRET_TOKEN_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._~+/=-]{15,511}\Z")
+_EMAIL_RE = re.compile(r"\A[^\s@]+@[^\s@]+\Z")
+_POSITIVE_INTEGER_RE = re.compile(r"\A[1-9][0-9]{0,18}\Z")
+_DECIMAL_RE = re.compile(r"\A(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)\Z")
+
+REQUIRED_SECRET_FIELDS = frozenset(
+    {
+        "realm_url",
+        "bot_email",
+        "api_key",
+        "bot_user_id",
+        "approver_user_ids",
+        "approval_stream",
+        "approval_stream_id",
+        "approval_topic",
+        "alert_stream",
+        "alert_stream_id",
+        "alert_topic",
+        "daily_stream",
+        "daily_stream_id",
+        "daily_topic",
+    }
+)
+OPTIONAL_SECRET_FIELDS = frozenset(
+    {
+        "ca_bundle",
+        "poll_timeout_seconds",
+        "retry_max_seconds",
+        "producer_poll_seconds",
+        "pending_page_size",
+    }
+)
+
+FIELD_TO_ENV = {
+    "realm_url": "ZULIP_REALM_URL",
+    "bot_email": "ZULIP_BOT_EMAIL",
+    "api_key": "ZULIP_API_KEY",
+    "bot_user_id": "ZULIP_BOT_USER_ID",
+    "approver_user_ids": "ZULIP_APPROVER_USER_IDS",
+    "approval_stream": "ZULIP_APPROVAL_STREAM",
+    "approval_stream_id": "ZULIP_APPROVAL_STREAM_ID",
+    "approval_topic": "ZULIP_APPROVAL_TOPIC",
+    "alert_stream": "ZULIP_ALERT_STREAM",
+    "alert_stream_id": "ZULIP_ALERT_STREAM_ID",
+    "alert_topic": "ZULIP_ALERT_TOPIC",
+    "daily_stream": "ZULIP_DAILY_STREAM",
+    "daily_stream_id": "ZULIP_DAILY_STREAM_ID",
+    "daily_topic": "ZULIP_DAILY_TOPIC",
+    "ca_bundle": "ZULIP_CA_BUNDLE",
+    "poll_timeout_seconds": "ZULIP_POLL_TIMEOUT_SECONDS",
+    "retry_max_seconds": "ZULIP_RETRY_MAX_SECONDS",
+    "producer_poll_seconds": "ZULIP_PRODUCER_POLL_SECONDS",
+    "pending_page_size": "OPS_BROKER_PENDING_PAGE_SIZE",
+}
+
+FIXED_ENVIRONMENT = {
+    "OPS_BROKER_SOCKET": "/run/ops-broker/api.sock",
+    "ALERTMANAGER_QUERY_SOCKET": "/run/zulip-alertmanager-query/api.sock",
+    "OPS_DAILY_REPORT_PATH": "/var/lib/ops-reports/daily/latest.json",
+    "OPS_CAPTURE_DIR": "/var/lib/ops-reports/captures",
+    "ZULIP_BRIDGE_STATE": "/var/lib/zulip-approval-bridge/state.db",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONUNBUFFERED": "1",
+}
+
+
+class LaunchError(RuntimeError):
+    """A deliberately non-secret-bearing error at the CLI boundary."""
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(  # type: ignore[override]
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        raise LaunchError
+
+
+def _validated_ascii(value: Any, pattern: re.Pattern[str]) -> str:
+    if not isinstance(value, str) or not value.isascii() or not pattern.fullmatch(value):
+        raise LaunchError
+    return value
+
+
+def _bounded_text(value: Any, *, maximum: int = 200) -> str:
+    if not isinstance(value, str):
+        raise LaunchError
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > maximum
+        or any(ord(character) < 32 or ord(character) == 127 for character in normalized)
+    ):
+        raise LaunchError
+    return normalized
+
+
+def _positive_integer(value: Any) -> str:
+    raw = _validated_ascii(value, _POSITIVE_INTEGER_RE)
+    if int(raw) <= 0:
+        raise LaunchError
+    return str(int(raw))
+
+
+def _bounded_decimal(value: Any, minimum: float, maximum: float) -> str:
+    raw = _validated_ascii(value, _DECIMAL_RE)
+    parsed = float(raw)
+    if not math.isfinite(parsed) or not minimum <= parsed <= maximum:
+        raise LaunchError
+    return format(parsed, "g")
+
+
+def _bounded_integer(value: Any, minimum: int, maximum: int) -> str:
+    raw = _positive_integer(value)
+    parsed = int(raw)
+    if not minimum <= parsed <= maximum:
+        raise LaunchError
+    return str(parsed)
+
+
+def _realm_origin(value: Any) -> str:
+    raw = _bounded_text(value, maximum=2048)
+    parsed = urlsplit(raw)
+    try:
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise LaunchError from exc
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or parsed_port == 0
+    ):
+        raise LaunchError
+    return raw.rstrip("/")
+
+
+def _ca_bundle(value: Any) -> str:
+    raw = _bounded_text(value, maximum=4096)
+    path = Path(raw)
+    anchor_directory = Path("/etc/pki/ca-trust/source/anchors")
+    try:
+        relative = path.relative_to(anchor_directory)
+    except ValueError as exc:
+        raise LaunchError from exc
+    if not path.is_absolute() or not relative.parts or ".." in relative.parts:
+        raise LaunchError
+    try:
+        path_stat = os.lstat(path)
+    except OSError as exc:
+        raise LaunchError from exc
+    if (
+        not stat.S_ISREG(path_stat.st_mode)
+        or path_stat.st_uid != 0
+        or stat.S_IMODE(path_stat.st_mode) & 0o022
+    ):
+        raise LaunchError
+    return raw
+
+
+def validate_secret_data(data: Mapping[str, Any]) -> dict[str, str]:
+    """Validate the exact KV object and return its minimal process environment."""
+
+    if not isinstance(data, dict):
+        raise LaunchError
+    keys = frozenset(data)
+    if not REQUIRED_SECRET_FIELDS.issubset(keys):
+        raise LaunchError
+    if not keys.issubset(REQUIRED_SECRET_FIELDS | OPTIONAL_SECRET_FIELDS):
+        raise LaunchError
+
+    result = {
+        "ZULIP_REALM_URL": _realm_origin(data["realm_url"]),
+        "ZULIP_BOT_EMAIL": _validated_ascii(data["bot_email"], _EMAIL_RE),
+        "ZULIP_API_KEY": _validated_ascii(data["api_key"], _SECRET_TOKEN_RE),
+        "ZULIP_BOT_USER_ID": _positive_integer(data["bot_user_id"]),
+        "ZULIP_APPROVAL_STREAM": _bounded_text(data["approval_stream"]),
+        "ZULIP_APPROVAL_STREAM_ID": _positive_integer(data["approval_stream_id"]),
+        "ZULIP_APPROVAL_TOPIC": _bounded_text(data["approval_topic"]),
+        "ZULIP_ALERT_STREAM": _bounded_text(data["alert_stream"]),
+        "ZULIP_ALERT_STREAM_ID": _positive_integer(data["alert_stream_id"]),
+        "ZULIP_ALERT_TOPIC": _bounded_text(data["alert_topic"]),
+        "ZULIP_DAILY_STREAM": _bounded_text(data["daily_stream"]),
+        "ZULIP_DAILY_STREAM_ID": _positive_integer(data["daily_stream_id"]),
+        "ZULIP_DAILY_TOPIC": _bounded_text(data["daily_topic"]),
+    }
+
+    approver_text = _bounded_text(data["approver_user_ids"], maximum=1024)
+    raw_approvers = approver_text.split(",")
+    if not raw_approvers:
+        raise LaunchError
+    approvers = [_positive_integer(item.strip()) for item in raw_approvers]
+    if len(set(approvers)) != len(approvers):
+        raise LaunchError
+    if result["ZULIP_BOT_USER_ID"] in approvers:
+        raise LaunchError
+    result["ZULIP_APPROVER_USER_IDS"] = ",".join(approvers)
+
+    optional_validators: dict[str, Callable[[Any], str]] = {
+        "ca_bundle": _ca_bundle,
+        "poll_timeout_seconds": lambda value: _bounded_decimal(value, 30, 300),
+        "retry_max_seconds": lambda value: _bounded_decimal(value, 5, 300),
+        "producer_poll_seconds": lambda value: _bounded_decimal(value, 5, 300),
+        "pending_page_size": lambda value: _bounded_integer(value, 1, 50),
+    }
+    for field, validator in optional_validators.items():
+        if field in data:
+            result[FIELD_TO_ENV[field]] = validator(data[field])
+
+    if set(result) - set(FIELD_TO_ENV.values()):
+        raise LaunchError
+    return result
+
+
+def _load_credential(name: str) -> str:
+    if os.environ.get("CREDENTIALS_DIRECTORY", "") != str(CREDENTIALS_DIRECTORY):
+        raise LaunchError
+    path = CREDENTIALS_DIRECTORY / name
+    try:
+        path_stat = os.lstat(path)
+        if (
+            not stat.S_ISREG(path_stat.st_mode)
+            or path_stat.st_uid not in {0, os.geteuid()}
+            # systemd may grant this service a named-user read ACL; its mask
+            # appears as group-read (0440) even with the root group unchanged.
+            or path_stat.st_gid not in {0, os.getegid()}
+            or stat.S_IMODE(path_stat.st_mode) not in {0o400, 0o440}
+            or not 1 <= path_stat.st_size <= MAX_CREDENTIAL_BYTES
+        ):
+            raise LaunchError
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        try:
+            opened_stat = os.fstat(descriptor)
+            if (
+                opened_stat.st_dev != path_stat.st_dev
+                or opened_stat.st_ino != path_stat.st_ino
+                or not stat.S_ISREG(opened_stat.st_mode)
+            ):
+                raise LaunchError
+            raw = os.read(descriptor, MAX_CREDENTIAL_BYTES + 1)
+            if len(raw) > MAX_CREDENTIAL_BYTES or os.read(descriptor, 1):
+                raise LaunchError
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise LaunchError from exc
+    try:
+        value = raw.rstrip(b"\r\n").decode("ascii", errors="strict")
+    except UnicodeError as exc:
+        raise LaunchError from exc
+    return _validated_ascii(value, _IDENTIFIER_RE)
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    context = ssl.create_default_context(cafile=BAO_CA)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+        urllib.request.HTTPSHandler(context=context),
+    )
+
+
+def _request(
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    token: str | None = None,
+    expect_json: bool = True,
+) -> dict[str, Any] | None:
+    if method not in {"GET", "POST"} or not path.startswith("/v1/"):
+        raise LaunchError
+    body = None
+    headers = {"Accept": "application/json", "User-Agent": "zulip-openbao-launcher/1"}
+    if payload is not None or method == "POST":
+        body = json.dumps(payload or {}, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if token is not None:
+        headers["X-Vault-Token"] = _validated_ascii(token, _TOKEN_RE)
+    request = urllib.request.Request(
+        BAO_ORIGIN + path, data=body, headers=headers, method=method
+    )
+    try:
+        with _opener().open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            if response.status not in ({200} if expect_json else {200, 204}):
+                raise LaunchError
+            response_body = response.read(MAX_RESPONSE_BYTES + 1)
+    except (OSError, ssl.SSLError, urllib.error.URLError) as exc:
+        raise LaunchError from exc
+    if len(response_body) > MAX_RESPONSE_BYTES:
+        raise LaunchError
+    if not expect_json:
+        return None
+    try:
+        decoded = json.loads(response_body)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise LaunchError from exc
+    if not isinstance(decoded, dict):
+        raise LaunchError
+    return decoded
+
+
+RequestCallable = Callable[..., dict[str, Any] | None]
+CredentialCallable = Callable[[str], str]
+
+
+def _kv_data(document: Mapping[str, Any]) -> dict[str, Any]:
+    outer = document.get("data")
+    if not isinstance(outer, dict):
+        raise LaunchError
+    inner = outer.get("data")
+    if not isinstance(inner, dict):
+        raise LaunchError
+    return inner
+
+
+def resolve_environment(
+    *,
+    credential_loader: CredentialCallable | None = None,
+    request_callable: RequestCallable | None = None,
+) -> dict[str, str]:
+    load = credential_loader or _load_credential
+    request = request_callable or _request
+    role_id = _validated_ascii(load(ROLE_ID_CREDENTIAL), _IDENTIFIER_RE)
+    secret_id = _validated_ascii(load(SECRET_ID_CREDENTIAL), _IDENTIFIER_RE)
+    client_token: str | None = None
+    resolution_error: BaseException | None = None
+    revocation_error: BaseException | None = None
+    result: dict[str, str] = {}
+    secret_document: dict[str, Any] | None = None
+
+    try:
+        login = request(
+            "POST",
+            "/v1/auth/approle/login",
+            payload={"role_id": role_id, "secret_id": secret_id},
+        )
+        if not isinstance(login, dict) or not isinstance(login.get("auth"), dict):
+            raise LaunchError
+        client_token = _validated_ascii(login["auth"].get("client_token"), _TOKEN_RE)
+        secret_document = request("GET", KV_PATH, token=client_token)
+        if not isinstance(secret_document, dict):
+            raise LaunchError
+        result = validate_secret_data(_kv_data(secret_document))
+    except BaseException as exc:
+        resolution_error = exc
+    finally:
+        if client_token is not None:
+            try:
+                request(
+                    "POST",
+                    "/v1/auth/token/revoke-self",
+                    token=client_token,
+                    expect_json=False,
+                )
+            except BaseException as exc:
+                revocation_error = exc
+            client_token = None
+        role_id = ""
+        secret_id = ""
+        if secret_document is not None:
+            secret_document.clear()
+
+    if resolution_error is not None or revocation_error is not None:
+        result.clear()
+        raise LaunchError from (resolution_error or revocation_error)
+    return result
+
+
+def _validate_runtime_identity_and_target() -> None:
+    try:
+        identity = pwd.getpwnam(SERVICE_USER)
+        target_stat = os.lstat(BRIDGE_EXECUTABLE)
+    except (KeyError, OSError) as exc:
+        raise LaunchError from exc
+    if os.geteuid() != identity.pw_uid or os.getegid() != identity.pw_gid:
+        raise LaunchError
+    if (
+        not stat.S_ISREG(target_stat.st_mode)
+        or target_stat.st_uid != 0
+        or stat.S_IMODE(target_stat.st_mode) & 0o022
+        or not target_stat.st_mode & stat.S_IXUSR
+    ):
+        raise LaunchError
+
+
+def launch() -> None:
+    _validate_runtime_identity_and_target()
+    environment = resolve_environment()
+    if set(environment) - set(FIELD_TO_ENV.values()):
+        environment.clear()
+        raise LaunchError
+    environment.update(FIXED_ENVIRONMENT)
+    os.execve(str(BRIDGE_EXECUTABLE), [str(BRIDGE_EXECUTABLE)], environment)
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 1:
+        print("zulip-openbao-launcher: no arguments are accepted", file=sys.stderr)
+        return 64
+    try:
+        launch()
+    except BaseException as exc:
+        # Journal only code locations and exception classes, never messages,
+        # request bodies, credential values, environments, or frame locals.
+        failures = []
+        seen = set()
+        cause = exc
+        while cause is not None and id(cause) not in seen and len(failures) < 8:
+            seen.add(id(cause))
+            frames = []
+            tb = cause.__traceback__
+            while tb is not None:
+                if tb.tb_frame.f_code.co_filename == __file__:
+                    frames.append([tb.tb_frame.f_code.co_name, tb.tb_lineno])
+                tb = tb.tb_next
+            failures.append({"type": type(cause).__name__, "frames": frames[-12:]})
+            cause = cause.__cause__
+        print("zulip-openbao-launcher: secure launch failed " + json.dumps(failures), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

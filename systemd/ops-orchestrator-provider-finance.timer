@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh provider balances every thirty minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+AccuracySec=1min
+RandomizedDelaySec=2min
+Persistent=true
+Unit=ops-orchestrator-provider-finance.service
+
+[Install]
+WantedBy=timers.target

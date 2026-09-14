@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "enabled": false,
+  "provider": "jina",
+  "embedding": {
+    "url": "https://api.jina.ai/v1/embeddings",
+    "model": "jina-embeddings-v5-text-small",
+    "dimensions": 1024,
+    "credential_credential": "embedding-api-token",
+    "daily_call_budget": 100,
+    "protocol": "jina"
+  },
+  "reranker": {
+    "url": "https://api.jina.ai/v1/rerank",
+    "model": "jina-reranker-v3.5",
+    "credential_credential": "reranker-api-token",
+    "daily_call_budget": 100,
+    "protocol": "jina"
+  },
+  "sources": [
+    "https://api.jina.ai/openapi.json",
+    "https://jina.ai/embeddings/"
+  ],
+  "checked_at": "2026-09-12",
+  "real_provider_acceptance": "pending_credentials"
+}

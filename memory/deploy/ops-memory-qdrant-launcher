@@ -1,0 +1,35 @@
+#!/usr/bin/bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+if [[ ${QDRANT_IMAGE:-} != sha256:* ]]; then
+  printf '%s\n' 'Qdrant image is not pinned to an immutable local ID.' >&2
+  exit 78
+fi
+runtime_config=/run/ops-memory-qdrant/production.yaml
+if [[ ! -f $runtime_config || -L $runtime_config ]]; then
+  printf '%s\n' 'Protected Qdrant runtime configuration is unavailable.' >&2
+  exit 78
+fi
+runtime_mode=$(stat -Lc '%a' "$runtime_config")
+if [[ $runtime_mode != 600 ]]; then
+  printf '%s\n' 'Protected Qdrant runtime configuration permissions are unsafe.' >&2
+  exit 78
+fi
+
+exec /usr/bin/podman run \
+  --rm \
+  --name ops-memory-qdrant \
+  --replace \
+  --pull=never \
+  --sdnotify=conmon \
+  --network=host \
+  --read-only \
+  --cap-drop=all \
+  --security-opt=no-new-privileges \
+  --pids-limit=256 \
+  --memory=768m \
+  --cpus=2 \
+  --volume=/var/lib/ops-memory-qdrant:/qdrant/storage:Z,rw \
+  --volume=/run/ops-memory-qdrant/production.yaml:/qdrant/config/production.yaml:ro,Z \
+  "$QDRANT_IMAGE"

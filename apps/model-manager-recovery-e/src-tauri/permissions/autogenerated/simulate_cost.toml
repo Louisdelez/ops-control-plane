@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-simulate-cost"
+description = "Enables the simulate_cost command without any pre-configured scope."
+commands.allow = ["simulate_cost"]
+
+[[permission]]
+identifier = "deny-simulate-cost"
+description = "Denies the simulate_cost command without any pre-configured scope."
+commands.deny = ["simulate_cost"]

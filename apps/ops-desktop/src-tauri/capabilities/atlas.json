@@ -1,0 +1,19 @@
+{
+  "identifier": "atlas",
+  "description": "Atlas local only; no service webview can access its backend.",
+  "webviews": [
+    "atlas"
+  ],
+  "local": true,
+  "permissions": [
+    "allow-get-native-budget",
+    "allow-get-catalogue",
+    "allow-get-runtime-snapshot",
+    "allow-simulate-cost",
+    "allow-preview-candidates",
+    "allow-refresh-provider-finance",
+    "allow-save-provider-credential",
+    "allow-get-bootstrap-status",
+    "allow-get-bootstrap-result"
+  ]
+}

@@ -1,0 +1,5 @@
+# Exact privileged transition for the separately approved local deployment.
+Cmnd_Alias OPSBROKER_CONTROL_PLANE_DEPLOYMENT = \
+    /usr/local/libexec/ops-runbooks/control-plane-deployment status
+
+opsbroker ALL=(root) NOPASSWD: OPSBROKER_CONTROL_PLANE_DEPLOYMENT

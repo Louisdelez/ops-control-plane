@@ -1,0 +1,11 @@
+[Unit]
+Description=Backup and isolated restore verification of native Ops connector state
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/ops-native-backup.py
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/ops-native-backups /var/lib/hermes/native-ops/connector /var/lib/ops-native-approval

@@ -1,0 +1,59 @@
+[Unit]
+Description=Create a coherent SQLite and Qdrant ops-memory backup
+Documentation=file:/usr/local/share/doc/ops-control-plane/runbooks/memory-backup-restore.md
+Requires=ops-memory-secrets.service ops-memory-qdrant.service
+After=ops-memory-secrets.service ops-memory-qdrant.service
+ConditionPathExists=/etc/ops-memory/backup.toml
+OnSuccess=ops-memory-backup-metric-success.service
+OnFailure=ops-memory-backup-metric-failure.service
+
+[Service]
+Type=oneshot
+User=opsmemory
+Group=opsmemory
+SupplementaryGroups=ops-memory-backup
+UMask=0027
+RuntimeDirectory=ops-memory-backup
+RuntimeDirectoryMode=0750
+LoadCredential=qdrant-api-key:/run/ops-memory-secrets/qdrant-api-key
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/ops-memory-backup/bin/ops-memory-backup --config /etc/ops-memory/backup.toml backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=30min
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1
+IPAddressAllow=::1
+# A live WAL database needs SQLite to take read locks through its -shm file.
+# This process already runs as the owning opsmemory identity; the root-owned
+# executable remains the boundary that limits writes to the online-backup API.
+ReadWritePaths=/var/lib/ops-memory /var/backups/ops-memory
+NoExecPaths=/var/backups/ops-memory
+LimitNOFILE=1024
+TasksMax=64
+MemoryMax=256M

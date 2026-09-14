@@ -1,0 +1,13 @@
+## Active base for the Dell Ops control plane.
+## Fedora's package default uses `task,never`, which disables syscall audit
+## contexts and makes operational watches ineffective.
+
+## Clear any package/default rules before loading the reviewed policy.
+-D
+
+## Absorb short bursts without silently dropping control-plane changes.
+-b 8192
+--backlog_wait_time 60000
+
+## Log kernel audit failures without panicking the workstation.
+-f 1

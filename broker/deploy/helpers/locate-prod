@@ -1,0 +1,31 @@
+#!/usr/bin/python3 -I
+"""One fixed LAN observation through systemd; no target or command arguments."""
+import fcntl,ipaddress,json,os,stat,subprocess,sys,time
+from pathlib import Path
+def main():
+ if os.geteuid()!=0 or len(sys.argv)!=1:raise ValueError()
+ fd=os.open('/run/lock/ops-locate-prod.lock',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+ with os.fdopen(fd,'w') as lock:
+  fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);started=time.time()
+  subprocess.run(['/usr/bin/systemctl','start','ops-locate-prod.service'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True,timeout=45,env={'PATH':'/usr/bin:/bin','LANG':'C'})
+  fd=os.open('/run/ops-locate-prod/result.json',os.O_RDONLY|os.O_NOFOLLOW)
+  try:
+   st=os.fstat(fd)
+   if not stat.S_ISREG(st.st_mode) or st.st_uid!=0 or st.st_mode&0o022 or st.st_size>4096:raise ValueError()
+   value=json.loads(os.read(fd,4097))
+  finally:os.close(fd)
+  if value.get('resource')!='prod' or not started<=value.get('checked_at',0)<=time.time():raise ValueError()
+  if value.get('status') not in {'located','not_found','ambiguous','unavailable'}:raise ValueError()
+  addresses=value.get('candidates')
+  if not isinstance(addresses,list) or len(addresses)>254:raise ValueError()
+  for address in addresses:
+   if ipaddress.ip_address(address) not in ipaddress.ip_network('192.0.2.0/24'):raise ValueError()
+  output={'resource':'prod','checked_at':value['checked_at'],'status':value['status'],'candidates':addresses,'identity':'known_ssh_host_key_candidate; verify with authenticated SSH'}
+  if value['status']=='unavailable':
+   reason=value.get('reason')
+   if reason not in {'lan_not_attached','known_ed25519_key_absent'}:raise ValueError()
+   output['reason']=reason
+  print(json.dumps(output))
+if __name__=='__main__':
+ try:main()
+ except Exception:print('{"status":"unavailable","reason":"local_observation_failed"}');raise SystemExit(1)

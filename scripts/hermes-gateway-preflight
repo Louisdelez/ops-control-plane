@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+umask 077
+
+readonly secret_helper=/usr/local/libexec/hermes-secrets-env
+readonly broker_wrapper=/usr/local/libexec/ops-broker-mcp-profile
+readonly orchestrator_wrapper=/usr/local/libexec/ops-orchestrator-mcp-profile
+readonly memory_wrapper=/usr/local/libexec/ops-memory-mcp-profile
+readonly broker_mcp=/opt/ops-broker/venv/bin/ops-broker-mcp
+readonly orchestrator_mcp=/opt/ops-orchestrator/venv/bin/ops-orchestrator-mcp
+readonly memory_mcp=/opt/ops-memory/bin/ops-memory-mcp
+readonly orchestrator_socket=/run/ops-orchestrator/api.sock
+readonly memory_socket=/run/ops-memory/ops-memory.sock
+readonly facade_health=http://127.0.0.1:8643/healthz
+readonly bao_ca=/etc/openbao.d/tls/ca.crt
+readonly readiness_attempts=10
+readonly readiness_delay_seconds=1
+
+root_owned_executable() {
+  local path=$1 owner mode
+  [[ -f $path && ! -L $path && -x $path ]] || return 1
+  IFS=' ' read -r owner mode < <(/usr/bin/stat -Lc '%u %a' -- "$path")
+  [[ $owner == 0 ]] || return 1
+  (( (8#$mode & 8#022) == 0 ))
+}
+
+wait_for_ready() {
+  local attempts=$1 delay_seconds=$2 attempt
+  shift 2
+  for (( attempt = 1; attempt <= attempts; attempt++ )); do
+    if "$@"; then
+      return 0
+    fi
+    if (( attempt < attempts )); then
+      /usr/bin/sleep "$delay_seconds"
+    fi
+  done
+  return 1
+}
+
+local_mcp_backends_ready() {
+  local local_socket
+  for local_socket in "$orchestrator_socket" "$memory_socket"; do
+    [[ -S $local_socket && -r $local_socket && -w $local_socket ]] || return 1
+  done
+}
+
+facade_ready() {
+  /usr/bin/curl --silent --fail --max-time 1 \
+    --noproxy '*' --proto '=http' "$facade_health" >/dev/null
+}
+
+dotenv_has_value() {
+  local payload=$1 key=$2 minimum=$3
+  /usr/bin/awk -v key="$key" -v minimum="$minimum" '
+    index($0, key "=") == 1 {
+      value = substr($0, length(key) + 2)
+      if (length(value) >= minimum) found = 1
+    }
+    END { exit(found ? 0 : 1) }
+  ' <<<"$payload"
+}
+
+main() {
+  local trusted_executable secret_output
+
+  for trusted_executable in \
+    "$secret_helper" "$broker_wrapper" "$orchestrator_wrapper" "$memory_wrapper" \
+    "$broker_mcp" "$orchestrator_mcp" "$memory_mcp"; do
+    if ! root_owned_executable "$trusted_executable"; then
+      echo "Hermes preflight: a required executable failed ownership checks." >&2
+      return 1
+    fi
+  done
+
+  if ! wait_for_ready \
+    "$readiness_attempts" "$readiness_delay_seconds" local_mcp_backends_ready; then
+    echo "Hermes preflight: a required local MCP backend is unavailable after bounded retries." >&2
+    return 1
+  fi
+
+  if ! wait_for_ready "$readiness_attempts" "$readiness_delay_seconds" facade_ready; then
+    echo "Hermes preflight: the local budgeted model facade is unavailable after bounded retries." >&2
+    return 1
+  fi
+
+  if [[ ! -f $bao_ca || -L $bao_ca || ! -r $bao_ca ]]; then
+    echo "Hermes preflight: the OpenBao CA is unavailable." >&2
+    return 1
+  fi
+
+  if ! /usr/bin/curl --silent --show-error --fail --max-time 4 \
+    --cacert "$bao_ca" \
+    'https://127.0.0.1:8200/v1/sys/health?standbyok=true&perfstandbyok=true' \
+    >/dev/null; then
+    echo "Hermes preflight: OpenBao is unavailable, sealed or uninitialized." >&2
+    return 1
+  fi
+
+  secret_output=$($secret_helper default) || {
+    echo "Hermes preflight: runtime secret resolution failed." >&2
+    return 1
+  }
+  if (( ${#secret_output} > 2048 )); then
+    unset secret_output
+    echo "Hermes preflight: secret helper output exceeded its bound." >&2
+    return 1
+  fi
+  if ! dotenv_has_value "$secret_output" HERMES_FACADE_TOKEN 16; then
+    unset secret_output
+    echo "Hermes preflight: local orchestrator facade credential unavailable." >&2
+    return 1
+  fi
+  if ! dotenv_has_value "$secret_output" API_SERVER_KEY 16; then
+    unset secret_output
+    echo "Hermes preflight: gateway API credential unavailable." >&2
+    return 1
+  fi
+  unset secret_output
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

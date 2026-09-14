@@ -1,0 +1,9 @@
+[Unit]
+Description=Detect configured native API capabilities
+After=openbao.service ops-native.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/ops-execution-mode auto
+TimeoutStartSec=90
+UMask=0077

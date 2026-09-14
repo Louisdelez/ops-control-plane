@@ -1,0 +1,79 @@
+[[permission]]
+identifier = "allow-get-catalogue"
+description = "Retourne le catalogue public embarque, sans valeur de secret."
+commands.allow = ["get_catalogue"]
+
+[[permission]]
+identifier = "allow-get-runtime-snapshot"
+description = "Lit une projection bornee de la sante et des budgets via le socket Unix local."
+commands.allow = ["get_runtime_snapshot"]
+
+[[permission]]
+identifier = "allow-simulate-cost"
+description = "Calcule localement un cout en micro-USD avec des entiers."
+commands.allow = ["simulate_cost"]
+
+[[permission]]
+identifier = "allow-preview-candidates"
+description = "Classe localement ou consulte les candidats via le socket Unix local."
+commands.allow = ["preview_candidates"]
+
+[[permission]]
+identifier = "allow-refresh-provider-finance"
+description = "Demande au service local une lecture bornee du solde d'un compte revu."
+commands.allow = ["refresh_provider_finance"]
+
+[[permission]]
+identifier = "allow-get-bootstrap-status"
+description = "Expose uniquement l'identite publique et l'etat local de l'installation revue."
+commands.allow = ["get_bootstrap_status"]
+
+[[permission]]
+identifier = "allow-run-bootstrap-preflight"
+description = "Lance le preflight graphique local via le helper borne et Polkit."
+commands.allow = ["run_bootstrap_preflight"]
+
+[[permission]]
+identifier = "allow-run-bootstrap-corrective-preflight"
+description = "Lance uniquement le preflight racine d'une reparation corrective eligible et bornee."
+commands.allow = ["run_bootstrap_corrective_preflight"]
+
+[[permission]]
+identifier = "allow-run-bootstrap-recovery-preflight"
+description = "Lance le preflight racine neutre qui classifie une reprise locale exacte."
+commands.allow = ["run_bootstrap_recovery_preflight"]
+
+[[permission]]
+identifier = "allow-begin-bootstrap"
+description = "Transmet les saisies d'installation uniquement par pipe anonyme au helper local revu."
+commands.allow = ["begin_bootstrap"]
+
+[[permission]]
+identifier = "allow-begin-corrective-bootstrap"
+description = "Transmet les saisies uniquement au helper correctif atteste pour la release revue."
+commands.allow = ["begin_corrective_bootstrap"]
+
+[[permission]]
+identifier = "allow-begin-recovery-bootstrap"
+description = "Reprend uniquement le mode fresh ou correctif fige par le preflight racine neutre."
+commands.allow = ["begin_recovery_bootstrap"]
+
+[[permission]]
+identifier = "allow-get-bootstrap-result"
+description = "Retourne le dernier etat public de l'installation sans secret."
+commands.allow = ["get_bootstrap_result"]
+
+[[permission]]
+identifier = "allow-cancel-bootstrap"
+description = "Demande une annulation uniquement avant la frontiere de mutation declaree."
+commands.allow = ["cancel_bootstrap"]
+
+[[permission]]
+identifier = "allow-save-provider-credential"
+description = "Transmet une cle fournisseur au helper local par framing binaire sur pipe anonyme."
+commands.allow = ["save_provider_credential"]
+
+[[permission]]
+identifier = "allow-open-zulip"
+description = "Ouvre uniquement l'URL Zulip locale compilee dans le backend."
+commands.allow = ["open_zulip"]

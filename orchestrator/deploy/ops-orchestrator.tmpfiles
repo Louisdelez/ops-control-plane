@@ -1,0 +1,4 @@
+d /etc/ops-orchestrator 0750 root opsorchestrator -
+d /etc/ops-orchestrator/benchmarks 0750 root opsorchestrator -
+d /var/lib/ops-orchestrator 0700 opsorchestrator opsorchestrator -
+d /run/ops-orchestrator 0750 opsorchestrator opsorchestrator-api -

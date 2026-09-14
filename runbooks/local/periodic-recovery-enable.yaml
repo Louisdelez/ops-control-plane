@@ -1,0 +1,19 @@
+id: backup.periodic-recovery-enable.v1
+version: 1
+project: infra-shared
+action_class: C
+description: Activer une copie quotidienne chiffrée vers NAS ou VPS, première copie vérifiée, sans suppression ; plafond 256 Mio par archive et 20 Gio par destination
+timeout_seconds: 300
+command:
+  argv:
+    - /usr/bin/sudo
+    - -n
+    - /usr/local/libexec/ops-runbooks/periodic-recovery-enable
+    - "{resource}"
+parameters:
+  resource:
+    type: enum
+    values: [nas, edge-vps]
+output:
+  max_bytes: 4096
+  redact: true

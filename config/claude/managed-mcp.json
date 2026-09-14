@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "ops-broker": {
+      "type": "stdio",
+      "command": "/usr/bin/sudo",
+      "args": [
+        "-n",
+        "-u",
+        "opsbroker",
+        "-g",
+        "opsbroker",
+        "--",
+        "/usr/local/libexec/ops-broker/ops-broker-mcp-claude"
+      ],
+      "env": {}
+    },
+    "ops-orchestrator": {
+      "type": "stdio",
+      "command": "/usr/local/libexec/ops-orchestrator/ops-orchestrator-mcp-claude",
+      "args": [],
+      "env": {}
+    },
+    "ops-memory": {
+      "type": "stdio",
+      "command": "/opt/ops-memory/bin/ops-memory-mcp",
+      "args": [],
+      "env": {
+        "OPS_MEMORY_MCP_ACTOR": "claude-supervised"
+      }
+    }
+  }
+}

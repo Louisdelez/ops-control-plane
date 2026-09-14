@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/ops-native/venv/bin/python -I -c 'import sys; sys.path.insert(0,"/opt/ops-memory/src"); from ops_native.memory_models import main; main()' "$@"

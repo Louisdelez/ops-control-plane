@@ -1,0 +1,17 @@
+id: local.service-status.v1
+version: 1
+project: infra-shared
+action_class: A
+description: Lire l'etat d'une unite locale allowlistee
+timeout_seconds: 10
+command:
+  argv:
+    - /usr/local/libexec/ops-runbooks/service-status
+    - "{service}"
+parameters:
+  service:
+    type: enum
+    values: [openbao.service, ollama.service, ops-broker.service, hermes-gateway.service]
+output:
+  max_bytes: 16384
+  redact: true

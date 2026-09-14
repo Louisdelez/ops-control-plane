@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+authors = [{ name = "LOUIS DELEZ" }]
+license = { text = "MIT" }
+name = "ops-native"
+version = "0.1.12"
+description = "Native Hermes observation adapter with durable broker records"
+requires-python = ">=3.11"
+dependencies = ["mcp==2.1.1"]
+
+[project.scripts]
+ops-native = "ops_native.cli:main"
+ops-native-cli-pilot = "ops_native.cli_pilot:main"
+ops-native-workflow = "ops_native.workflows:main"
+ops-native-tools = "ops_native.tools:main"
+ops-native-model-proxy = "ops_native.model_proxy:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ops_native*"]

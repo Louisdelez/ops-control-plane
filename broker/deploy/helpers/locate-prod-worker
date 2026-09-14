@@ -1,0 +1,48 @@
+#!/usr/bin/python3 -I
+"""Locate the existing prod host key on the owner's fixed LAN, without login."""
+import concurrent.futures,ipaddress,json,os,socket,subprocess,sys,tempfile,time
+from pathlib import Path
+DIRECTORY=Path('/run/ops-locate-prod')
+KNOWN=Path('/home/ops-user/.ssh/known_hosts')
+def keys(raw):
+ result=set()
+ for line in raw.splitlines():
+  fields=line.split()
+  if len(fields)==3 and fields[1]==b'ssh-ed25519' and len(fields[2])<=512:result.add(fields[2])
+ return result
+def candidate(address,trusted):
+ try:
+  with socket.create_connection((address,22),timeout=.35):pass
+  result=subprocess.run(['/usr/bin/ssh-keyscan','-T','1','-t','ed25519',address],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=3)
+  if len(result.stdout)>8192:return None
+  if keys(result.stdout)&trusted:return address
+ except (OSError,subprocess.TimeoutExpired):pass
+ return None
+def scan():
+ # No invented subnet: this exact LAN must be directly attached to the Dell.
+ routes=json.loads(subprocess.run(['/usr/sbin/ip','-j','route','show','192.0.2.0/24'],check=True,capture_output=True,timeout=3).stdout)
+ if not any(r.get('dst')=='192.0.2.0/24' and not r.get('gateway') for r in routes):return {'status':'unavailable','reason':'lan_not_attached','candidates':[]}
+ result=subprocess.run(['/usr/bin/ssh-keygen','-F','192.0.2.65','-f',str(KNOWN)],stdin=subprocess.DEVNULL,capture_output=True,timeout=3)
+ trusted=keys(result.stdout)
+ if not trusted:return {'status':'unavailable','reason':'known_ed25519_key_absent','candidates':[]}
+ addresses=[str(address) for address in ipaddress.ip_network('192.0.2.0/24').hosts()]
+ with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+  matches=[address for address in pool.map(lambda address:candidate(address,trusted),addresses) if address]
+ return {'status':'located' if len(matches)==1 else 'not_found' if not matches else 'ambiguous','candidates':matches}
+def main():
+ if len(sys.argv)==2 and sys.argv[1]=='--scan':
+  if os.geteuid()==0:raise SystemExit(2)
+  print(json.dumps(scan()));return
+ if os.geteuid()!=0 or len(sys.argv)!=1:raise SystemExit(2)
+ started=time.time()
+ result=subprocess.run(['/usr/sbin/runuser','-u','ops-user','--','/usr/bin/env','-i','HOME=/home/ops-user','USER=ops-user','PATH=/usr/bin:/bin',str(Path(__file__).resolve()),'--scan'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=35)
+ if result.returncode or len(result.stdout)>4096:raise RuntimeError('Scan unavailable')
+ value=json.loads(result.stdout);value.update(resource='prod',checked_at=started,identity='known_ssh_host_key_candidate; verify with authenticated SSH')
+ DIRECTORY.mkdir(mode=0o755,exist_ok=True)
+ fd,name=tempfile.mkstemp(prefix='.result-',dir=DIRECTORY)
+ try:
+  with os.fdopen(fd,'w') as f:json.dump(value,f);f.write('\n');f.flush();os.fsync(f.fileno())
+  os.chmod(name,0o644);os.replace(name,DIRECTORY/'result.json')
+ finally:
+  if os.path.exists(name):os.unlink(name)
+if __name__=='__main__':main()

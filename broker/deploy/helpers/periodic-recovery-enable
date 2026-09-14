@@ -1,0 +1,34 @@
+#!/usr/bin/python3 -I
+"""Class C activation of one fixed daily encrypted recovery destination."""
+from pathlib import Path
+import hashlib,json,os,stat,subprocess,sys,time
+
+def main():
+ if os.geteuid()!=0 or len(sys.argv)!=2 or sys.argv[1] not in {'nas','edge-vps'}:raise ValueError()
+ target=sys.argv[1];root=Path('/var/lib/ops-periodic-recovery')
+ root.mkdir(mode=0o700,exist_ok=True);meta=root.lstat()
+ if not stat.S_ISDIR(meta.st_mode) or meta.st_uid!=0 or meta.st_mode&0o077:raise ValueError()
+ marker=root/(target+'.enabled.json')
+ if marker.exists():raise ValueError('Existing activation must be reviewed, not overwritten')
+ pinned={name:hashlib.sha256((Path('/usr/local/libexec/ops-runbooks')/name).read_bytes()).hexdigest()
+         for name in ('periodic-recovery-copy','receive-recovery-bundle.py')}
+ with marker.open('x') as stream:
+  json.dump({'schema_version':1,'resource':target,'activated_at':time.time(),'pinned':pinned,
+             'scope':'daily append-only ciphertext; 256MiB per bundle, 20GiB destination quota, no deletion'},stream)
+  stream.flush();os.fsync(stream.fileno())
+ marker.chmod(0o600)
+ timer='ops-periodic-recovery@'+target+'.timer'
+ try:
+  subprocess.run(['systemctl','enable','--now',timer],check=True,capture_output=True,timeout=30)
+  subprocess.run(['systemctl','start','ops-periodic-recovery@'+target+'.service'],check=True,capture_output=True,timeout=270)
+ except Exception:
+  subprocess.run(['systemctl','disable','--now',timer],capture_output=True,timeout=30)
+  raise
+ receipt=json.loads((root/(target+'.latest.json')).read_text())
+ print(json.dumps({'resource':target,'status':'enabled_and_first_copy_verified','schedule':'daily 05:30 local time',
+                   'sha256':receipt['sha256'],'bytes':receipt['bytes'],'deletes_existing_backups':False}))
+
+if __name__=='__main__':
+ os.umask(0o077)
+ try:main()
+ except Exception:raise SystemExit('Periodic recovery activation needs review; no existing backup removed') from None

@@ -1,0 +1,41 @@
+diff --git a/tests/tools/test_mcp_trust_gating.py b/tests/tools/test_mcp_trust_gating.py
+index b2d47a2..ffe9638 100644
+--- a/tests/tools/test_mcp_trust_gating.py
++++ b/tests/tools/test_mcp_trust_gating.py
+@@ -247,3 +247,23 @@ class TestAnnotationCaptureAtDiscovery:
+         assert _mcp_registration._annotation_read_only_hint(
+             SimpleNamespace()
+         ) is False
++
++
++def test_sdk_annotations_survive_discovery_and_cache():
++    from mcp.types import Tool, ToolAnnotations
++    from tools.registry import ToolRegistry
++
++    server = mcp_tool.MCPServerTask("sdk-trust-test")
++    server.session = MagicMock()
++    server._tools = [Tool(name="inspect", inputSchema={}, annotations=ToolAnnotations(readOnlyHint=True)),
++                     Tool(name="mutate", inputSchema={}, annotations=ToolAnnotations(readOnlyHint=False)),
++                     Tool(name="unknown", inputSchema={})]
++    config = {"trust": "untrusted", "tools": {"resources": False, "prompts": False}}
++    with patch("tools.registry.registry", ToolRegistry()), \
++         patch("tools.mcp_tool_registration._track_mcp_tool_server"):
++        _mcp_registration._register_server_tools("sdk-trust-test", server, config)
++    hints = mcp_tool._tool_read_only_hints["sdk-trust-test"]
++    assert hints == {"inspect": True, "mutate": False, "unknown": False}
++    for tool in server._tools:
++        cached = SimpleNamespace(annotations={"readOnlyHint": _mcp_registration._annotation_read_only_hint(tool)})
++        assert _mcp_registration._annotation_read_only_hint(cached) is (tool.name == "inspect")
+diff --git a/tools/mcp_tool_registration.py b/tools/mcp_tool_registration.py
+index abe0d4b..52cea21 100644
+--- a/tools/mcp_tool_registration.py
++++ b/tools/mcp_tool_registration.py
+@@ -46,7 +46,7 @@ def _normalize_server_trust(value: Any) -> str:
+ def _annotation_read_only_hint(mcp_tool: Any) -> bool:
+     """True only when annotations (SDK object or cache dict) carry ``readOnlyHint is True``; unknown = write-capable."""
+     annotations = getattr(mcp_tool, "annotations", None)
+-    hint = annotations.get("readOnlyHint") if isinstance(annotations, dict) else getattr(annotations, "readOnlyHint", None)
++    hint = annotations.get("readOnlyHint") if isinstance(annotations, dict) else mcp_field(annotations, "read_only_hint", "readOnlyHint")
+     return hint is True
+ 
+ 

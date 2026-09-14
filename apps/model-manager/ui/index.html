@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self'; script-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    >
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#090b12">
+    <title>Atlas · Gestionnaire de modèles</title>
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./onboarding.js" defer></script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Aller au contenu</a>
+
+    <div class="ambient ambient--one" aria-hidden="true"></div>
+    <div class="ambient ambient--two" aria-hidden="true"></div>
+
+    <section
+      class="onboarding"
+      id="bootstrap-onboarding"
+      aria-labelledby="onboarding-title"
+      aria-describedby="onboarding-description"
+      hidden
+    >
+      <div class="onboarding-shell">
+        <header class="onboarding-header">
+          <div class="brand-lockup">
+            <span class="brand-mark" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </span>
+            <span>
+              <span class="eyebrow">INSTALLATION LOCALE SÉCURISÉE</span>
+              <strong class="brand-name">Atlas</strong>
+            </span>
+          </div>
+          <span class="local-only-badge"><i aria-hidden="true"></i> Cette machine</span>
+        </header>
+
+        <ol class="onboarding-steps" id="onboarding-steps" aria-label="Progression de l’installation">
+          <li data-onboarding-marker="welcome"><span>1</span><small>Bienvenue</small></li>
+          <li data-onboarding-marker="account"><span>2</span><small>Compte</small></li>
+          <li data-onboarding-marker="credentials"><span>3</span><small>Sécurité</small></li>
+          <li data-onboarding-marker="review"><span>4</span><small>Validation</small></li>
+          <li data-onboarding-marker="install"><span>5</span><small>Installation</small></li>
+        </ol>
+
+        <p class="sr-only" id="onboarding-description">
+          Assistant local de création des accès et d’installation du contrôle Hermes.
+        </p>
+        <div class="onboarding-live sr-only" id="onboarding-live" aria-live="assertive" aria-atomic="true"></div>
+        <main class="onboarding-content" id="onboarding-content" tabindex="-1">
+          <div class="onboarding-loading" role="status">
+            <span class="onboarding-spinner" aria-hidden="true"></span>
+            <div>
+              <h1 id="onboarding-title">Vérification locale</h1>
+              <p>Atlas vérifie l’état de l’installation sans modifier la machine.</p>
+            </div>
+          </div>
+        </main>
+      </div>
+    </section>
+
+    <div class="app-shell" id="atlas-app-shell">
+      <header class="app-header" aria-label="En-tête principal">
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </span>
+          <span>
+            <span class="eyebrow">HERMES CONTROL PLANE</span>
+            <strong class="brand-name">Atlas</strong>
+          </span>
+        </div>
+        <button
+          class="runtime-pill runtime-pill--loading"
+          id="runtime-pill"
+          type="button"
+          aria-label="Afficher l’état du système"
+          aria-controls="runtime-popover"
+          aria-expanded="false"
+        >
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="runtime-pill-label">Connexion…</span>
+        </button>
+      </header>
+
+      <div class="runtime-popover" id="runtime-popover" hidden>
+        <div>
+          <strong>État du système</strong>
+          <span id="runtime-detail">Lecture des services locaux…</span>
+        </div>
+        <button class="icon-button" id="close-runtime-popover" type="button" aria-label="Fermer">×</button>
+      </div>
+
+      <main id="main-content" tabindex="-1">
+        <section
+          class="tab-panel tab-panel--active"
+          id="panel-catalogue"
+          role="tabpanel"
+          aria-labelledby="tab-catalogue"
+          data-panel="catalogue"
+        >
+          <div class="hero">
+            <div>
+              <p class="section-kicker">CATALOGUE UNIFIÉ</p>
+              <h1>Le bon cerveau,<br><span>au bon moment.</span></h1>
+              <p class="hero-copy">
+                Compare les capacités, le coût estimé et l’état d’intégration de chaque modèle sans exposer tes clés.
+              </p>
+            </div>
+            <div class="catalogue-count" aria-live="polite">
+              <strong id="model-count">—</strong>
+              <span>modèles</span>
+            </div>
+          </div>
+
+          <section class="scenario-strip" aria-labelledby="comparison-title">
+            <div class="scenario-icon" aria-hidden="true">↗</div>
+            <div>
+              <h2 id="comparison-title">Comparaison identique</h2>
+              <p id="comparison-summary">10 M entrée + 2 M sortie / mois · hors cache</p>
+            </div>
+            <button class="text-button" type="button" data-open-costs>Modifier</button>
+          </section>
+
+          <section class="system-defaults" aria-labelledby="system-defaults-title">
+            <h2 id="system-defaults-title">Modèles recommandés par le système</h2>
+            <p>Ta sélection par défaut. Configure les deux clés pour activer les API.</p>
+            <div class="system-defaults__grid">
+              <article class="system-default-card system-recommended">
+                <span class="recommendation-badge">Recommandé par le système</span>
+                <h3>DeepSeek Flash</h3><p>Génération · Par défaut</p><code>deepseek-flash</code>
+                <button type="button" class="card-button card-button--configure" data-configure-account="deepseek">Configurer DeepSeek</button>
+              </article>
+              <article class="system-default-card system-recommended">
+                <span class="recommendation-badge">Recommandé par le système</span>
+                <h3>Jina Embeddings v5 Text Small</h3><p>Mémoire · Embeddings par défaut</p><code>jina-embeddings-v5-text-small</code>
+                <button type="button" class="card-button card-button--configure" data-configure-account="jina">Configurer Jina</button>
+              </article>
+              <article class="system-default-card system-recommended">
+                <span class="recommendation-badge">Recommandé par le système</span>
+                <h3>Jina Reranker v3.5</h3><p>Mémoire · Classement par défaut</p><code>jina-reranker-v3.5</code>
+                <button type="button" class="card-button card-button--configure" data-configure-account="jina">Configurer Jina</button>
+              </article>
+            </div>
+            <p>Jina : une seule clé et un solde commun pour les deux modèles. Recharge automatique à désactiver chez le fournisseur.</p>
+          </section>
+          <section class="catalogue-tools" aria-label="Recherche et filtres">
+            <label class="search-field">
+              <span class="search-icon" aria-hidden="true"></span>
+              <span class="sr-only">Rechercher un modèle</span>
+              <input
+                id="catalogue-search"
+                type="search"
+                inputmode="search"
+                autocomplete="off"
+                placeholder="Modèle, fournisseur, spécialité…"
+              >
+              <kbd aria-hidden="true">Ctrl K</kbd>
+            </label>
+
+            <div class="filter-row" role="group" aria-label="Filtres rapides">
+              <button class="filter-chip filter-chip--active" type="button" data-quick-filter="all" aria-pressed="true">
+                Tous
+              </button>
+              <button class="filter-chip" type="button" data-quick-filter="deployed" aria-pressed="false">
+                Déploiements
+              </button>
+              <button class="filter-chip" type="button" data-quick-filter="credential_resolved" aria-pressed="false">
+                Clé résolue runtime
+              </button>
+              <button class="filter-chip" type="button" data-quick-filter="economical" aria-pressed="false">
+                Économiques
+              </button>
+            </div>
+
+            <details class="filter-drawer" id="filter-drawer">
+              <summary>
+                <span>Filtres avancés</span>
+                <span class="filter-badge" id="active-filter-count" hidden>0</span>
+                <span class="chevron" aria-hidden="true">⌄</span>
+              </summary>
+              <div class="filter-grid">
+                <label>
+                  Fournisseur
+                  <select id="provider-filter">
+                    <option value="">Tous les fournisseurs</option>
+                  </select>
+                </label>
+                <label>
+                  Spécialité
+                  <select id="specialty-filter">
+                    <option value="">Toutes les spécialités</option>
+                  </select>
+                </label>
+                <label>
+                  Statut
+                  <select id="status-filter">
+                    <option value="">Tous les statuts</option>
+                    <option value="runtime_available">Runtime local disponible</option>
+                    <option value="deployed">Déploiement déclaré</option>
+                    <option value="catalogue">Catalogue seulement</option>
+                    <option value="review">À vérifier</option>
+                    <option value="retired">Retiré</option>
+                  </select>
+                </label>
+                <label>
+                  Trier par
+                  <select id="sort-filter">
+                    <option value="cost">Coût estimé croissant</option>
+                    <option value="fit">Meilleure capacité</option>
+                    <option value="name">Nom A–Z</option>
+                    <option value="provider">Fournisseur A–Z</option>
+                  </select>
+                </label>
+              </div>
+              <button class="reset-button" id="reset-filters" type="button">Réinitialiser les filtres</button>
+            </details>
+          </section>
+
+          <div class="section-heading catalogue-heading">
+            <div>
+              <p class="section-kicker">CARTES MODÈLES</p>
+              <h2 id="catalogue-results-title">Disponibles pour comparaison</h2>
+            </div>
+            <span id="result-count" aria-live="polite"></span>
+          </div>
+
+          <div id="catalogue-state" class="state-region" aria-live="polite" aria-busy="true">
+            <div class="skeleton-grid" role="status" aria-label="Chargement du catalogue">
+              <div class="skeleton-card"><span></span><span></span><span></span><span></span></div>
+              <div class="skeleton-card"><span></span><span></span><span></span><span></span></div>
+              <div class="skeleton-card"><span></span><span></span><span></span><span></span></div>
+            </div>
+          </div>
+
+          <section id="model-grid" class="model-grid" aria-labelledby="catalogue-results-title" hidden></section>
+
+          <div class="pagination-sentinel" id="pagination-sentinel" hidden>
+            <button class="secondary-button secondary-button--wide" id="show-more" type="button">Afficher plus</button>
+          </div>
+        </section>
+
+        <section
+          class="tab-panel"
+          id="panel-routing"
+          role="tabpanel"
+          aria-labelledby="tab-routing"
+          data-panel="routing"
+          hidden
+        >
+          <div class="page-heading">
+            <p class="section-kicker">ROUTAGE PAR CAPACITÉS</p>
+            <h1>Décris le besoin.<br><span>Atlas classe les candidats.</span></h1>
+            <p>
+              La prévisualisation n’exécute aucun modèle et ne consomme aucun crédit.
+            </p>
+          </div>
+
+          <form class="routing-form" id="routing-form">
+            <section class="surface-card">
+              <div class="card-section-heading">
+                <div>
+                  <p class="step-label">01 · MISSION</p>
+                  <h2>Quel travail faut-il accomplir&nbsp;?</h2>
+                </div>
+              </div>
+              <label class="textarea-label">
+                Note de mission facultative
+                <textarea
+                  id="task-description"
+                  name="description"
+                  rows="4"
+                  maxlength="600"
+                  placeholder="Ex. Corriger un problème de concurrence dans une API Rust et proposer des tests…"
+                ></textarea>
+                <span><span id="task-character-count">0</span>/600</span>
+              </label>
+              <p class="balance-note">Cette note reste dans l’écran et n’est pas envoyée. Le classement actuel utilise uniquement les capacités et contraintes explicites ci-dessous.</p>
+            </section>
+
+            <section class="surface-card">
+              <div class="card-section-heading">
+                <div>
+                  <p class="step-label">02 · PROFIL</p>
+                  <h2>Capacités nécessaires</h2>
+                </div>
+                <button class="mini-button" id="reset-profile" type="button">Réinitialiser</button>
+              </div>
+              <div class="capability-sliders">
+                <div class="range-field">
+                  <span><label for="need-reasoning"><strong>Raisonnement</strong></label><output for="need-reasoning">5/10</output></span>
+                  <input id="need-reasoning" name="reasoning" type="range" min="0" max="10" value="5">
+                </div>
+                <div class="range-field">
+                  <span><label for="need-code"><strong>Programmation</strong></label><output for="need-code">5/10</output></span>
+                  <input id="need-code" name="code" type="range" min="0" max="10" value="5">
+                </div>
+                <div class="range-field">
+                  <span><label for="need-research"><strong>Recherche</strong></label><output for="need-research">3/10</output></span>
+                  <input id="need-research" name="research" type="range" min="0" max="10" value="3">
+                </div>
+                <div class="range-field">
+                  <span><label for="need-speed"><strong>Vitesse</strong></label><output for="need-speed">6/10</output></span>
+                  <input id="need-speed" name="speed" type="range" min="0" max="10" value="6">
+                </div>
+              </div>
+            </section>
+
+            <section class="surface-card">
+              <p class="step-label">03 · CONTRAINTES</p>
+              <div class="constraint-grid">
+                <label>
+                  Budget maximal estimé
+                  <select id="routing-budget" name="budget">
+                    <option value="low">Faible · priorité au coût</option>
+                    <option value="medium" selected>Intermédiaire</option>
+                    <option value="high">Élevé · priorité qualité</option>
+                    <option value="exceptional">Exceptionnel</option>
+                  </select>
+                </label>
+                <label>
+                  Contexte spécialisé
+                  <select id="routing-context" name="context">
+                    <option value="">Indifférent</option>
+                    <option value="long-context">Carte « long contexte » requise</option>
+                  </select>
+                </label>
+                <label>
+                  Projet runtime
+                  <select id="routing-project" name="project">
+                    <option value="infra-shared" selected>Infrastructure partagée</option>
+                    <option value="minecraft">Minecraft</option>
+                    <option value="network-shared">Réseau partagé</option>
+                    <option value="monitoring-shared">Supervision partagée</option>
+                    <option value="backup-shared">Sauvegarde partagée</option>
+                  </select>
+                </label>
+              </div>
+              <label class="switch-row">
+                <span>
+                  <strong>Tool calling obligatoire</strong>
+                  <small>Exclut les modèles sans appels d’outils validés.</small>
+                </span>
+                <input id="tools-required" name="tools_required" type="checkbox" role="switch" checked>
+              </label>
+              <label class="switch-row">
+                <span>
+                  <strong>Accès runtime disponibles uniquement</strong>
+                  <small>Exige un déploiement déclaré et une clé résolue ; le réseau fournisseur reste non testé.</small>
+                </span>
+                <input id="configured-only" name="configured_only" type="checkbox" role="switch" checked>
+              </label>
+            </section>
+
+            <button class="primary-button primary-button--wide" id="preview-routing" type="submit">
+              <span>Prévisualiser le routage</span>
+              <span aria-hidden="true">→</span>
+            </button>
+          </form>
+
+          <section class="routing-results" id="routing-results" aria-live="polite" aria-labelledby="routing-results-title" hidden>
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">CLASSEMENT EXPLIQUÉ</p>
+                <h2 id="routing-results-title">Candidats recommandés</h2>
+              </div>
+            </div>
+            <div id="candidate-list" class="candidate-list"></div>
+          </section>
+        </section>
+
+        <section
+          class="tab-panel"
+          id="panel-costs"
+          role="tabpanel"
+          aria-labelledby="tab-costs"
+          data-panel="costs"
+          hidden
+        >
+          <div class="page-heading">
+            <p class="section-kicker">COÛTS COMPARABLES</p>
+            <h1>Une hypothèse.<br><span>Tous les modèles.</span></h1>
+            <p>Les montants sont des estimations hors taxes, cache, outils et remises fournisseur.</p>
+          </div>
+
+          <section class="surface-card simulator-card" aria-labelledby="simulator-title">
+            <div class="card-section-heading">
+              <div>
+                <p class="step-label">SIMULATION COMMUNE</p>
+                <h2 id="simulator-title">Volume mensuel</h2>
+              </div>
+              <span class="currency-pill">USD</span>
+            </div>
+            <div class="token-inputs">
+              <label>
+                Tokens d’entrée
+                <span class="number-input">
+                  <input id="input-tokens" type="number" min="0" max="10000000000" step="100000" value="10000000" inputmode="numeric">
+                  <span>tokens</span>
+                </span>
+              </label>
+              <label>
+                Tokens de sortie
+                <span class="number-input">
+                  <input id="output-tokens" type="number" min="0" max="10000000000" step="100000" value="2000000" inputmode="numeric">
+                  <span>tokens</span>
+                </span>
+              </label>
+            </div>
+            <div class="scenario-presets" role="group" aria-label="Scénarios prédéfinis">
+              <button type="button" data-scenario="small" data-input="1000000" data-output="200000">Petit</button>
+              <button type="button" class="active" data-scenario="standard" data-input="10000000" data-output="2000000">Standard</button>
+              <button type="button" data-scenario="intensive" data-input="100000000" data-output="20000000">Intensif</button>
+            </div>
+            <button class="primary-button primary-button--wide" id="apply-scenario" type="button">Appliquer à tout le catalogue</button>
+          </section>
+
+          <section class="cost-summary" aria-label="Résumé des coûts">
+            <article>
+              <span>Le moins cher</span>
+              <strong id="cheapest-cost">—</strong>
+              <small id="cheapest-model">Catalogue indisponible</small>
+            </article>
+            <article>
+              <span>Médiane</span>
+              <strong id="median-cost">—</strong>
+              <small>par mois sur les prix connus</small>
+            </article>
+            <article>
+              <span>Modèles chiffrés</span>
+              <strong id="priced-count">—</strong>
+              <small id="unknown-price-count">— prix à vérifier</small>
+            </article>
+          </section>
+
+          <section class="surface-card cost-ranking" aria-labelledby="cost-ranking-title">
+            <div class="card-section-heading">
+              <div>
+                <p class="step-label">CLASSEMENT</p>
+                <h2 id="cost-ranking-title">Coût mensuel estimé</h2>
+              </div>
+            </div>
+            <div id="cost-list" class="cost-list">
+              <div class="inline-loading"><span></span> Chargement du catalogue…</div>
+            </div>
+          </section>
+
+          <aside class="notice notice--neutral" aria-label="Avertissement sur les coûts">
+            <span aria-hidden="true">i</span>
+            <p>
+              Une estimation n’est pas une facture. Les paliers de contexte, le cache, les appels d’outils et les tarifs horaires peuvent modifier le coût final.
+            </p>
+          </aside>
+        </section>
+
+        <section
+          class="tab-panel"
+          id="panel-settings"
+          role="tabpanel"
+          aria-labelledby="tab-settings"
+          data-panel="settings"
+          hidden
+        >
+          <div class="page-heading">
+            <p class="section-kicker">ACCÈS &amp; GOUVERNANCE</p>
+            <h1>Tes fournisseurs.<br><span>Saisie locale sécurisée.</span></h1>
+            <p>Atlas sépare déploiement déclaré, résolution locale de la clé et disponibilité réseau. Les champs sensibles sont supprimés immédiatement après leur transmission au coffre.</p>
+          </div>
+
+          <aside class="notice notice--secure" aria-label="Protection des secrets">
+            <span class="shield-icon" aria-hidden="true">◆</span>
+            <div>
+              <strong>Aucun secret conservé dans la WebView</strong>
+              <p>Une clé n’est jamais renvoyée, journalisée, copiée dans le presse-papiers ou placée dans le stockage du navigateur.</p>
+            </div>
+          </aside>
+
+          <section class="surface-card settings-card" aria-labelledby="memory-setup-title">
+            <p class="step-label">MÉMOIRE COMMUNE</p>
+            <h2 id="memory-setup-title">Codex, Claude et Hermes</h2>
+            <p>La mémoire conserve l’inventaire, les décisions et l’historique Ops sur ce Dell. Les agents retrouvent ce contexte entre les sessions.</p>
+            <p><strong>Jina AI</strong> alimente les embeddings et le reranking avec une seule clé. <strong>DeepSeek Flash</strong> assure la génération. Ce sont les fournisseurs par défaut, recommandés ci-dessous. La mémoire locale reste disponible sans crédit API.</p>
+            <p>Les clés peuvent être ajoutées séparément. Le stockage local fonctionne pendant l’attente. Une clé enregistrée ne prouve pas encore qu’un appel fournisseur réussit.</p>
+          </section>
+
+          <section aria-labelledby="accounts-title">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">COMPTES FOURNISSEURS</p>
+                <h2 id="accounts-title">Accès API</h2>
+              </div>
+              <span id="account-count">—</span>
+            </div>
+            <div id="account-list" class="account-list">
+              <div class="inline-loading"><span></span> Lecture des accès…</div>
+            </div>
+          </section>
+
+          <section class="surface-card settings-card" aria-labelledby="router-settings-title">
+            <div class="card-section-heading">
+              <div>
+                <p class="step-label">POLITIQUE ACTIVE</p>
+                <h2 id="router-settings-title">Routeur de modèles</h2>
+              </div>
+              <span class="status-chip status-chip--muted" id="router-mode">Lecture…</span>
+            </div>
+            <dl class="settings-list">
+              <div>
+                <dt>Stratégie</dt>
+                <dd id="router-strategy">Moins cher raisonnablement capable</dd>
+              </div>
+              <div>
+                <dt>Escalade</dt>
+                <dd id="router-escalation">Économique → intermédiaire → puissant → premium</dd>
+              </div>
+              <div>
+                <dt>Catalogue</dt>
+                <dd id="catalogue-version">—</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="surface-card settings-card" aria-labelledby="data-settings-title">
+            <div class="card-section-heading">
+              <div>
+                <p class="step-label">DONNÉES</p>
+                <h2 id="data-settings-title">Mesures locales</h2>
+              </div>
+            </div>
+            <p class="muted-copy">
+              Les résultats validés ajustent uniquement le classement observé, dans une limite stricte, sans modifier les cartes du catalogue.
+            </p>
+            <dl class="settings-list">
+              <div>
+                <dt>Dernière synchronisation</dt>
+                <dd id="last-sync">—</dd>
+              </div>
+              <div>
+                <dt>Décisions observées</dt>
+                <dd id="decision-count">—</dd>
+              </div>
+              <div>
+                <dt>Résultats validés</dt>
+                <dd id="validated-outcome-count">—</dd>
+              </div>
+              <div>
+                <dt>Apprentissage</dt>
+                <dd id="adaptive-policy">—</dd>
+              </div>
+            </dl>
+            <div id="performance-list" class="performance-list">
+              <div class="inline-loading"><span></span> Lecture de l’historique…</div>
+            </div>
+          </section>
+        </section>
+      </main>
+
+      <nav class="tab-bar" role="tablist" aria-label="Navigation principale">
+        <button
+          class="tab-button tab-button--active"
+          id="tab-catalogue"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          aria-controls="panel-catalogue"
+          data-tab="catalogue"
+        >
+          <span class="tab-icon tab-icon--cards" aria-hidden="true"><i></i><i></i></span>
+          <span>Catalogue</span>
+        </button>
+        <button
+          class="tab-button"
+          id="tab-routing"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-routing"
+          tabindex="-1"
+          data-tab="routing"
+        >
+          <span class="tab-icon tab-icon--route" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>Routage</span>
+        </button>
+        <button
+          class="tab-button"
+          id="tab-costs"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-costs"
+          tabindex="-1"
+          data-tab="costs"
+        >
+          <span class="tab-icon tab-icon--cost" aria-hidden="true">$</span>
+          <span>Coûts</span>
+        </button>
+        <button
+          class="tab-button"
+          id="tab-settings"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-settings"
+          tabindex="-1"
+          data-tab="settings"
+        >
+          <span class="tab-icon tab-icon--settings" aria-hidden="true"><i></i></span>
+          <span>Réglages</span>
+        </button>
+      </nav>
+    </div>
+
+    <dialog class="model-dialog" id="model-dialog" aria-labelledby="model-dialog-title">
+      <div class="dialog-sheet">
+        <header class="dialog-header" aria-label="Détail du modèle">
+          <div>
+            <p class="section-kicker" id="model-dialog-provider">MODÈLE</p>
+            <h2 id="model-dialog-title">Détail du modèle</h2>
+          </div>
+          <button class="icon-button dialog-close" type="button" aria-label="Fermer">×</button>
+        </header>
+        <div id="model-dialog-content" class="dialog-content"></div>
+      </div>
+    </dialog>
+
+    <dialog class="credential-dialog" id="credential-dialog" aria-labelledby="credential-dialog-title">
+      <div class="credential-dialog-sheet">
+        <header class="dialog-header" aria-label="Configuration sécurisée d’un accès API">
+          <div>
+            <p class="section-kicker">COFFRE OPENBAO</p>
+            <h2 id="credential-dialog-title">Configurer une clé API</h2>
+          </div>
+          <button class="icon-button credential-dialog-close" type="button" aria-label="Fermer">×</button>
+        </header>
+        <div id="credential-dialog-content" class="credential-dialog-content"></div>
+      </div>
+    </dialog>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>

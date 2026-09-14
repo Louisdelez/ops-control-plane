@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-settings-manage"
+description = "Enables the settings_manage command without any pre-configured scope."
+commands.allow = ["settings_manage"]
+
+[[permission]]
+identifier = "deny-settings-manage"
+description = "Denies the settings_manage command without any pre-configured scope."
+commands.deny = ["settings_manage"]

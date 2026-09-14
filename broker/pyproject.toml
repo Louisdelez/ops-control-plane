@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+authors = [{ name = "LOUIS DELEZ" }]
+name = "ops-broker"
+version = "0.1.4"
+description = "Fail-closed local operations broker for Hermes and supervised MCP clients"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "fastapi==0.141.1",
+  "pydantic==2.13.5",
+  "PyYAML==6.0.3",
+  "uvicorn==0.52.4",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp==2.1.1"]
+dev = [
+  "httpx==0.28.1",
+  "pytest==9.1.1",
+]
+
+[project.scripts]
+ops-broker = "ops_broker.api:main"
+ops-broker-backup = "ops_broker.backup:main"
+ops-broker-mcp = "ops_broker.mcp_server:main"
+ops-broker-verify = "ops_broker.verify_audit:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,891 @@
+#!/usr/bin/env python3
+"""Run the local Ollama benchmark once, after strict NVIDIA 580xx gates.
+
+This helper is intentionally user-scoped.  It never loads a kernel module,
+changes a driver, pulls a model, promotes a model, or handles credentials.
+"""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import datetime as dt
+import fcntl
+import hashlib
+import http.client
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any, Callable, Sequence
+
+
+SCHEMA_VERSION = 1
+WORKFLOW = "nvidia-580xx-post-reboot-benchmark"
+MARKER_NAME = "benchmark-v1.marker"
+REPORT_NAME = "status-v1.json"
+LOCK_NAME = ".benchmark-v1.lock"
+ARCHIVE_DIRECTORY_NAME = "archive"
+MAX_REPORT_BYTES = 16 * 1024
+MAX_MARKER_BYTES = 2 * 1024
+MAX_COMMAND_OUTPUT_BYTES = 64 * 1024
+BENCHMARK_INTERRUPTED_EXIT_CODE = 75
+NVIDIA_580_RE = re.compile(r"^580(?:\.[0-9]+){1,3}$")
+SAFE_SIGNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/@()+-]{0,255}$")
+SAFE_RUN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+class AutomationError(RuntimeError):
+    """A controlled, non-sensitive workflow error."""
+
+
+@dataclasses.dataclass(frozen=True)
+class CommandResult:
+    returncode: int
+    stdout: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
+class Paths:
+    repository: Path
+    state: Path
+    sys_modules: Path = Path("/sys/module")
+
+    @property
+    def marker(self) -> Path:
+        return self.state / MARKER_NAME
+
+    @property
+    def report(self) -> Path:
+        return self.state / REPORT_NAME
+
+    @property
+    def lock(self) -> Path:
+        return self.state / LOCK_NAME
+
+    @property
+    def archive(self) -> Path:
+        return self.state / ARCHIVE_DIRECTORY_NAME
+
+
+def iso_utc() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def clean_environment() -> dict[str, str]:
+    environment = {
+        "HOME": str(Path.home()),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
+    }
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime_dir:
+        environment["XDG_RUNTIME_DIR"] = runtime_dir
+    return environment
+
+
+def run_command(arguments: Sequence[str], timeout_seconds: float) -> CommandResult:
+    try:
+        completed = subprocess.run(
+            list(arguments),
+            check=False,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=timeout_seconds,
+            env=clean_environment(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return CommandResult(127)
+    stdout = completed.stdout
+    if len(stdout.encode("utf-8", errors="replace")) > MAX_COMMAND_OUTPUT_BYTES:
+        return CommandResult(125)
+    return CommandResult(completed.returncode, stdout)
+
+
+def read_small_text(path: Path, maximum_bytes: int = 512) -> str | None:
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(maximum_bytes + 1)
+    except OSError:
+        return None
+    if len(raw) > maximum_bytes:
+        return None
+    try:
+        return raw.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return None
+
+
+def gate(name: str, passed: bool, **facts: Any) -> dict[str, Any]:
+    return {"name": name, "passed": bool(passed), "facts": facts}
+
+
+def mok_contains_signer(output: str, signer: str) -> bool:
+    """Match an exact subject CN without retaining certificate contents."""
+
+    expected = f"CN={signer}"
+    for line in output.splitlines():
+        subject_label, separator, distinguished_name = line.strip().partition(":")
+        if not separator or subject_label != "Subject":
+            continue
+        if any(component.strip() == expected for component in distinguished_name.split(",")):
+            return True
+    return False
+
+
+def trusted_benchmark_inputs(repository: Path) -> tuple[bool, int]:
+    required = (
+        repository / "benchmarks" / "ollama_benchmark.py",
+        repository / "benchmarks" / "prompts.json",
+        repository / "benchmarks" / "decision.schema.json",
+        repository / "config" / "ollama" / "benchmark.json",
+    )
+    try:
+        repository_resolved = repository.resolve(strict=True)
+    except OSError:
+        return False, 0
+    checked = 0
+    for path in required:
+        try:
+            metadata = path.lstat()
+            resolved = path.resolve(strict=True)
+            resolved.relative_to(repository_resolved)
+        except (OSError, ValueError):
+            return False, checked
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            return False, checked
+        if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            return False, checked
+        checked += 1
+    return True, checked
+
+
+def collect_nvidia_gates(
+    paths: Paths,
+    command_runner: Callable[[Sequence[str], float], CommandResult] = run_command,
+) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    secure_boot_result = command_runner(("mokutil", "--sb-state"), 5.0)
+    secure_boot_enabled = bool(
+        secure_boot_result.returncode == 0
+        and secure_boot_result.stdout.strip() == "SecureBoot enabled"
+    )
+    checks.append(gate("secure_boot_enabled", secure_boot_enabled))
+
+    nouveau_loaded = (paths.sys_modules / "nouveau").exists()
+    checks.append(gate("nouveau_absent", not nouveau_loaded))
+
+    nvidia_root = paths.sys_modules / "nvidia"
+    nvidia_loaded = nvidia_root.is_dir()
+    checks.append(gate("nvidia_module_loaded", nvidia_loaded))
+
+    loaded_version = read_small_text(nvidia_root / "version") if nvidia_loaded else None
+    loaded_580 = bool(loaded_version and NVIDIA_580_RE.fullmatch(loaded_version))
+    checks.append(
+        gate(
+            "nvidia_loaded_version_580xx",
+            loaded_580,
+            version=loaded_version if loaded_580 else None,
+        )
+    )
+
+    module_version_result = command_runner(
+        ("modinfo", "-F", "version", "nvidia"), 5.0
+    )
+    module_version = module_version_result.stdout.strip()
+    module_version_580 = bool(
+        module_version_result.returncode == 0
+        and NVIDIA_580_RE.fullmatch(module_version)
+        and module_version == loaded_version
+    )
+    checks.append(
+        gate(
+            "nvidia_module_file_version_580xx",
+            module_version_580,
+            version=module_version if module_version_580 else None,
+        )
+    )
+
+    signer_result = command_runner(("modinfo", "-F", "signer", "nvidia"), 5.0)
+    signer = signer_result.stdout.strip()
+    signer_present = bool(
+        signer_result.returncode == 0 and SAFE_SIGNER_RE.fullmatch(signer)
+    )
+    checks.append(gate("nvidia_module_signed", signer_present))
+
+    enrolled_result = command_runner(("mokutil", "--list-enrolled"), 10.0)
+    signer_enrolled = bool(
+        signer_present
+        and enrolled_result.returncode == 0
+        and mok_contains_signer(enrolled_result.stdout, signer)
+    )
+    checks.append(gate("nvidia_signer_enrolled", signer_enrolled))
+
+    smi_result = command_runner(
+        (
+            "nvidia-smi",
+            "--query-gpu=driver_version",
+            "--format=csv,noheader,nounits",
+        ),
+        10.0,
+    )
+    reported_versions = [
+        line.strip() for line in smi_result.stdout.splitlines() if line.strip()
+    ]
+    smi_580 = bool(
+        smi_result.returncode == 0
+        and 1 <= len(reported_versions) <= 16
+        and all(NVIDIA_580_RE.fullmatch(item) for item in reported_versions)
+        and all(item == loaded_version for item in reported_versions)
+    )
+    checks.append(
+        gate(
+            "nvidia_smi_580xx",
+            smi_580,
+            gpu_count=len(reported_versions) if smi_580 else 0,
+            driver_versions=sorted(set(reported_versions)) if smi_580 else [],
+        )
+    )
+    return checks
+
+
+def wait_for_ollama(timeout_seconds: float) -> tuple[bool, int]:
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    request = urllib.request.Request(
+        "http://127.0.0.1:11434/api/tags",
+        method="GET",
+        headers={"Accept": "application/json"},
+    )
+    while True:
+        try:
+            with urllib.request.urlopen(request, timeout=2.0) as response:
+                body = response.read(64 * 1024 + 1)
+                if response.status != 200 or len(body) > 64 * 1024:
+                    raise AutomationError("ollama-response-rejected")
+            value = json.loads(body.decode("utf-8"))
+            models = value.get("models") if isinstance(value, dict) else None
+            if isinstance(models, list):
+                return True, min(len(models), 10_000)
+        except (
+            AutomationError,
+            OSError,
+            UnicodeDecodeError,
+            ValueError,
+            http.client.HTTPException,
+            urllib.error.URLError,
+        ):
+            pass
+        if time.monotonic() >= deadline:
+            return False, 0
+        time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+
+
+def ensure_private_state_directory(path: Path) -> None:
+    if path.exists() and path.is_symlink():
+        raise AutomationError("state-directory-is-symlink")
+    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    metadata = path.stat()
+    if metadata.st_uid != os.getuid() or not stat.S_ISDIR(metadata.st_mode):
+        raise AutomationError("state-directory-not-owned")
+    path.chmod(0o700)
+
+
+def open_private_directory(path: Path) -> int:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(path, flags)
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_mode & 0o077
+        ):
+            raise AutomationError("private-directory-metadata-invalid")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def fsync_private_directory(path: Path) -> None:
+    descriptor = open_private_directory(path)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def encode_bounded(value: dict[str, Any], maximum_bytes: int) -> bytes:
+    raw = (
+        json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    if len(raw) > maximum_bytes:
+        raise AutomationError("bounded-json-too-large")
+    return raw
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant: {value}")
+
+
+def _reject_duplicate_keys(pairs: Sequence[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON key")
+        value[key] = item
+    return value
+
+
+def read_bounded_object(path: Path, maximum_bytes: int) -> dict[str, Any]:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise AutomationError("bounded-state-unavailable") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_nlink != 1
+            or metadata.st_size <= 0
+            or metadata.st_size > maximum_bytes
+            or metadata.st_mode & 0o077
+        ):
+            raise AutomationError("bounded-state-metadata-invalid")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = -1
+            raw = handle.read(maximum_bytes + 1)
+        if len(raw) > maximum_bytes:
+            raise AutomationError("bounded-state-too-large")
+        value = json.loads(
+            raw.decode("utf-8"),
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise AutomationError("bounded-state-invalid") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if not isinstance(value, dict):
+        raise AutomationError("bounded-state-not-object")
+    return value
+
+
+def atomic_write(path: Path, value: dict[str, Any], maximum_bytes: int) -> None:
+    raw = encode_bounded(value, maximum_bytes)
+    temporary = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(temporary, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        fsync_private_directory(path.parent)
+    except BaseException:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def create_marker(path: Path, value: dict[str, Any]) -> bool:
+    raw = encode_bounded(value, MAX_MARKER_BYTES)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except FileExistsError:
+        return False
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(raw)
+        handle.flush()
+        os.fsync(handle.fileno())
+    fsync_private_directory(path.parent)
+    return True
+
+
+def read_valid_marker(path: Path) -> dict[str, Any]:
+    value = read_bounded_object(path, MAX_MARKER_BYTES)
+    base_fields = {
+        "schema_version",
+        "workflow",
+        "state",
+        "claimed_at",
+        "boot_fingerprint",
+        "benchmark_exit_code",
+    }
+    state = value.get("state")
+    final_states = {"completed", "completed_no_eligible", "interrupted", "failed"}
+    expected_fields = base_fields | ({"completed_at", "run_name"} if state in final_states else set())
+    if set(value) != expected_fields:
+        raise AutomationError("marker-fields-invalid")
+    if value.get("schema_version") != SCHEMA_VERSION or value.get("workflow") != WORKFLOW:
+        raise AutomationError("marker-header-invalid")
+    if state not in {"claimed", *final_states}:
+        raise AutomationError("marker-state-invalid")
+    claimed_at = value.get("claimed_at")
+    fingerprint = value.get("boot_fingerprint")
+    if not isinstance(claimed_at, str) or not claimed_at or len(claimed_at) > 64:
+        raise AutomationError("marker-claimed-at-invalid")
+    if fingerprint is not None and (
+        not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{16}", fingerprint)
+    ):
+        raise AutomationError("marker-boot-fingerprint-invalid")
+    exit_code = value.get("benchmark_exit_code")
+    if isinstance(exit_code, bool) or (exit_code is not None and not isinstance(exit_code, int)):
+        raise AutomationError("marker-exit-code-invalid")
+    expected_exit_codes = {
+        "claimed": None,
+        "completed": 0,
+        "completed_no_eligible": 2,
+        "interrupted": BENCHMARK_INTERRUPTED_EXIT_CODE,
+    }
+    if state in expected_exit_codes and exit_code != expected_exit_codes[state]:
+        raise AutomationError("marker-state-exit-mismatch")
+    if state == "failed" and exit_code in {None, 0, 2, BENCHMARK_INTERRUPTED_EXIT_CODE}:
+        raise AutomationError("marker-state-exit-mismatch")
+    if state in final_states:
+        completed_at = value.get("completed_at")
+        run_name = value.get("run_name")
+        if not isinstance(completed_at, str) or not completed_at or len(completed_at) > 64:
+            raise AutomationError("marker-completed-at-invalid")
+        if (
+            not isinstance(run_name, str)
+            or run_name in {".", ".."}
+            or SAFE_RUN_NAME_RE.fullmatch(run_name) is None
+        ):
+            raise AutomationError("marker-run-name-invalid")
+    return value
+
+
+def marker_summary(path: Path) -> tuple[str, int | None]:
+    try:
+        value = read_valid_marker(path)
+    except AutomationError:
+        return "invalid", None
+    return str(value["state"]), value.get("benchmark_exit_code")
+
+
+def boot_fingerprint() -> str | None:
+    boot_id = read_small_text(Path("/proc/sys/kernel/random/boot_id"), 128)
+    if not boot_id or not re.fullmatch(r"[0-9a-fA-F-]{32,36}", boot_id):
+        return None
+    return hashlib.sha256(boot_id.encode("ascii")).hexdigest()[:16]
+
+
+def run_benchmark(
+    repository: Path, run_name: str, timeout_seconds: float
+) -> CommandResult:
+    command = (
+        sys.executable,
+        str(repository / "benchmarks" / "ollama_benchmark.py"),
+        "--config",
+        str(repository / "config" / "ollama" / "benchmark.json"),
+        "--scenarios",
+        str(repository / "benchmarks" / "prompts.json"),
+        "--schema",
+        str(repository / "benchmarks" / "decision.schema.json"),
+        "--run-name",
+        run_name,
+        "--require-eligible",
+    )
+    return run_command(command, timeout_seconds)
+
+
+def status_report(
+    *,
+    status: str,
+    checks: list[dict[str, Any]],
+    attempted: bool,
+    marker_created: bool,
+    run_name: str | None = None,
+    benchmark_exit_code: int | None = None,
+    report_json_present: bool = False,
+    report_markdown_present: bool = False,
+    interruption_reason: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "workflow": WORKFLOW,
+        "generated_at": iso_utc(),
+        "status": status,
+        "gate_summary": {
+            "passed": sum(1 for item in checks if item["passed"]),
+            "failed": sum(1 for item in checks if not item["passed"]),
+        },
+        "gates": checks,
+        "benchmark": {
+            "attempted": attempted,
+            "exit_code": benchmark_exit_code,
+            "run_name": run_name,
+            "report_json_present": report_json_present,
+            "report_markdown_present": report_markdown_present,
+            "promotion_performed": False,
+            "interruption_reason": interruption_reason,
+        },
+        "marker": {"name": MARKER_NAME, "created": marker_created},
+    }
+
+
+def collect_readiness_gates(
+    paths: Paths,
+    *,
+    command_runner: Callable[[Sequence[str], float], CommandResult],
+    ollama_probe: Callable[[float], tuple[bool, int]],
+) -> list[dict[str, Any]]:
+    checks = collect_nvidia_gates(paths, command_runner)
+    inputs_ok, inputs_checked = trusted_benchmark_inputs(paths.repository)
+    checks.append(
+        gate(
+            "benchmark_inputs_trusted",
+            inputs_ok,
+            files_checked=inputs_checked,
+        )
+    )
+    ollama_ok, model_count = ollama_probe(0.0)
+    checks.append(
+        gate(
+            "ollama_loopback_ready",
+            ollama_ok,
+            installed_model_count=model_count if ollama_ok else 0,
+        )
+    )
+    return checks
+
+
+def wait_for_readiness(
+    paths: Paths,
+    timeout_seconds: float,
+    *,
+    command_runner: Callable[[Sequence[str], float], CommandResult],
+    ollama_probe: Callable[[float], tuple[bool, int]],
+) -> list[dict[str, Any]]:
+    """Re-evaluate every boot-sensitive gate until ready or the bound expires."""
+
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        checks = collect_readiness_gates(
+            paths,
+            command_runner=command_runner,
+            ollama_probe=ollama_probe,
+        )
+        if all(item["passed"] for item in checks):
+            return checks
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return checks
+        time.sleep(min(2.0, remaining))
+
+
+def rearm_interrupted(paths: Paths) -> int:
+    """Archive one verified interrupted attempt and remove only its live marker."""
+
+    ensure_private_state_directory(paths.state)
+    lock_flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    lock_descriptor = os.open(paths.lock, lock_flags, 0o600)
+    with os.fdopen(lock_descriptor, "r+") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            marker = read_valid_marker(paths.marker)
+            report = read_bounded_object(paths.report, MAX_REPORT_BYTES)
+        except AutomationError:
+            print("post-reboot rearm refused: invalid or missing state", file=sys.stderr)
+            return 4
+
+        run_name = marker.get("run_name")
+        benchmark = report.get("benchmark")
+        report_marker = report.get("marker")
+        if (
+            marker.get("state") != "interrupted"
+            or marker.get("benchmark_exit_code") != BENCHMARK_INTERRUPTED_EXIT_CODE
+            or report.get("schema_version") != SCHEMA_VERSION
+            or report.get("workflow") != WORKFLOW
+            or report.get("status") != "benchmark_interrupted"
+            or not isinstance(benchmark, dict)
+            or benchmark.get("exit_code") != BENCHMARK_INTERRUPTED_EXIT_CODE
+            or benchmark.get("run_name") != run_name
+            or benchmark.get("promotion_performed") is not False
+            or not isinstance(report_marker, dict)
+            or report_marker.get("name") != MARKER_NAME
+            or report_marker.get("created") is not True
+        ):
+            print("post-reboot rearm refused: state is not interrupted", file=sys.stderr)
+            return 4
+
+        assert isinstance(run_name, str)
+        ensure_private_state_directory(paths.archive)
+        archive_root = paths.archive.resolve(strict=True)
+        archive_directory = paths.archive / run_name
+        marker_removed = False
+        state_descriptor = -1
+        try:
+            if archive_directory.exists() or archive_directory.is_symlink():
+                raise AutomationError("archive-already-exists")
+            archive_directory.mkdir(mode=0o700)
+            metadata = archive_directory.lstat()
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or metadata.st_mode & 0o077
+                or archive_directory.resolve(strict=True).parent != archive_root
+            ):
+                raise AutomationError("archive-directory-invalid")
+            atomic_write(
+                archive_directory / MARKER_NAME,
+                marker,
+                MAX_MARKER_BYTES,
+            )
+            atomic_write(
+                archive_directory / REPORT_NAME,
+                report,
+                MAX_REPORT_BYTES,
+            )
+            # Persist both archived files and their directory entry before the
+            # live marker is removed. A crash can therefore never authorize a
+            # retry whose archived evidence was not already made durable.
+            fsync_private_directory(archive_directory)
+            fsync_private_directory(paths.archive)
+            state_descriptor = open_private_directory(paths.state)
+            # Persist the archive root's entry in its parent before changing
+            # the live authorization marker.
+            os.fsync(state_descriptor)
+            if read_valid_marker(paths.marker) != marker:
+                raise AutomationError("marker-changed-during-rearm")
+            os.unlink(MARKER_NAME, dir_fd=state_descriptor)
+            marker_removed = True
+            os.fsync(state_descriptor)
+        except (AutomationError, OSError):
+            if marker_removed:
+                print(
+                    "post-reboot rearm incomplete: archive persisted but marker "
+                    "removal could not be synced",
+                    file=sys.stderr,
+                )
+                return 4
+            print("post-reboot rearm failed safely", file=sys.stderr)
+            return 4
+        finally:
+            if state_descriptor >= 0:
+                os.close(state_descriptor)
+
+        print(f"post-reboot interrupted attempt archived: {archive_directory}")
+        return 0
+
+
+def execute_once(
+    paths: Paths,
+    *,
+    ollama_wait_seconds: float,
+    benchmark_timeout_seconds: float,
+    command_runner: Callable[[Sequence[str], float], CommandResult] = run_command,
+    ollama_probe: Callable[[float], tuple[bool, int]] = wait_for_ollama,
+    benchmark_runner: Callable[[Path, str, float], CommandResult] = run_benchmark,
+) -> int:
+    ensure_private_state_directory(paths.state)
+    lock_flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    lock_descriptor = os.open(paths.lock, lock_flags, 0o600)
+    with os.fdopen(lock_descriptor, "r+") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+
+        if paths.marker.exists():
+            state, previous_exit = marker_summary(paths.marker)
+            print(f"post-reboot benchmark already claimed: state={state}")
+            if state == "completed" and previous_exit == 0:
+                return 0
+            if state == "completed_no_eligible" and previous_exit == 2:
+                return 2
+            if (
+                state == "interrupted"
+                and previous_exit == BENCHMARK_INTERRUPTED_EXIT_CODE
+            ):
+                return BENCHMARK_INTERRUPTED_EXIT_CODE
+            return 4
+
+        checks = wait_for_readiness(
+            paths,
+            ollama_wait_seconds,
+            command_runner=command_runner,
+            ollama_probe=ollama_probe,
+        )
+
+        if not all(item["passed"] for item in checks):
+            report = status_report(
+                status="blocked_by_gate",
+                checks=checks,
+                attempted=False,
+                marker_created=False,
+            )
+            atomic_write(paths.report, report, MAX_REPORT_BYTES)
+            print(f"post-reboot benchmark blocked; report={paths.report}")
+            return 3
+
+        claimed_at = iso_utc()
+        fingerprint = boot_fingerprint()
+        marker = {
+            "schema_version": SCHEMA_VERSION,
+            "workflow": WORKFLOW,
+            "state": "claimed",
+            "claimed_at": claimed_at,
+            "boot_fingerprint": fingerprint,
+            "benchmark_exit_code": None,
+        }
+        try:
+            marker_created = create_marker(paths.marker, marker)
+        except (AutomationError, OSError):
+            print(
+                "post-reboot benchmark marker could not be persisted",
+                file=sys.stderr,
+            )
+            return 4
+        if not marker_created:
+            print("post-reboot benchmark marker was claimed concurrently")
+            return 4
+
+        run_name = dt.datetime.now(dt.timezone.utc).strftime(
+            "post-reboot-nvidia580-v1-%Y%m%dT%H%M%SZ"
+        )
+        claimed_report = status_report(
+            status="benchmark_claimed",
+            checks=checks,
+            attempted=False,
+            marker_created=True,
+            run_name=run_name,
+        )
+        atomic_write(paths.report, claimed_report, MAX_REPORT_BYTES)
+        result = benchmark_runner(
+            paths.repository, run_name, benchmark_timeout_seconds
+        )
+        result_directory = paths.repository / "benchmarks" / "results" / run_name
+        json_present = (result_directory / "report.json").is_file()
+        markdown_present = (result_directory / "report.md").is_file()
+        if result.returncode == 0:
+            final_state = "completed"
+            final_status = "benchmark_completed"
+        elif result.returncode == 2:
+            final_state = "completed_no_eligible"
+            final_status = "benchmark_completed_no_eligible"
+        elif result.returncode == BENCHMARK_INTERRUPTED_EXIT_CODE:
+            final_state = "interrupted"
+            final_status = "benchmark_interrupted"
+        else:
+            final_state = "failed"
+            final_status = "benchmark_failed"
+        marker.update(
+            {
+                "state": final_state,
+                "completed_at": iso_utc(),
+                "benchmark_exit_code": result.returncode,
+                "run_name": run_name,
+            }
+        )
+        atomic_write(paths.marker, marker, MAX_MARKER_BYTES)
+        report = status_report(
+            status=final_status,
+            checks=checks,
+            attempted=True,
+            marker_created=True,
+            run_name=run_name,
+            benchmark_exit_code=result.returncode,
+            report_json_present=json_present,
+            report_markdown_present=markdown_present,
+            interruption_reason=(
+                "benchmark_campaign_interrupted"
+                if result.returncode == BENCHMARK_INTERRUPTED_EXIT_CODE
+                else None
+            ),
+        )
+        atomic_write(paths.report, report, MAX_REPORT_BYTES)
+        print(f"post-reboot benchmark finished; report={paths.report}")
+        if result.returncode == 0:
+            return 0
+        if result.returncode == 2:
+            return 2
+        if result.returncode == BENCHMARK_INTERRUPTED_EXIT_CODE:
+            return BENCHMARK_INTERRUPTED_EXIT_CODE
+        return 5
+
+
+def default_repository() -> Path:
+    return Path.home() / ".local" / "share" / "ops-control-plane" / "post-reboot"
+
+
+def default_state_directory() -> Path:
+    return Path.home() / ".local" / "state" / "ops-control-plane" / "post-reboot"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run the Ollama benchmark once after strict NVIDIA 580xx gates"
+    )
+    parser.add_argument("--repo-dir", type=Path, default=default_repository())
+    parser.add_argument("--state-dir", type=Path, default=default_state_directory())
+    parser.add_argument(
+        "--ollama-wait-seconds", type=float, default=120.0, metavar="SECONDS"
+    )
+    parser.add_argument(
+        "--benchmark-timeout-seconds", type=float, default=6900.0, metavar="SECONDS"
+    )
+    parser.add_argument(
+        "--rearm-interrupted",
+        action="store_true",
+        help="Archive et rearme uniquement une campagne explicitement interrompue",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    os.umask(0o077)
+    args = build_parser().parse_args(argv)
+    paths = Paths(
+        repository=args.repo_dir.expanduser(),
+        state=args.state_dir.expanduser(),
+    )
+    if args.rearm_interrupted:
+        try:
+            return rearm_interrupted(paths)
+        except (AutomationError, OSError):
+            print("post-reboot rearm failed safely", file=sys.stderr)
+            return 70
+    if not 0.0 <= args.ollama_wait_seconds <= 300.0:
+        print("invalid Ollama wait bound", file=sys.stderr)
+        return 64
+    if not 60.0 <= args.benchmark_timeout_seconds <= 6900.0:
+        print("invalid benchmark timeout bound", file=sys.stderr)
+        return 64
+    try:
+        return execute_once(
+            paths,
+            ollama_wait_seconds=args.ollama_wait_seconds,
+            benchmark_timeout_seconds=args.benchmark_timeout_seconds,
+        )
+    except AutomationError as exc:
+        print(f"post-reboot automation refused: {exc}", file=sys.stderr)
+        return 70
+    except OSError:
+        print("post-reboot automation failed safely", file=sys.stderr)
+        return 70
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

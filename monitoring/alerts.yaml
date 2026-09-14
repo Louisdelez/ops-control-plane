@@ -1,0 +1,237 @@
+groups:
+  - name: dell-ops
+    rules:
+      - alert: DellOpsDown
+        expr: up{job="dell-ops"} == 0
+        for: 2m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: Dell Ops inaccessible depuis 2 minutes
+      - alert: DellOpsDiskAlmostFull
+        expr: 100 * (1 - node_filesystem_avail_bytes{job="dell-ops",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{job="dell-ops",fstype!~"tmpfs|overlay"}) > 85
+        for: 10m
+        labels: {severity: warning, project: infra-shared}
+        annotations:
+          summary: Stockage Dell Ops au-dessus de 85 pour cent
+      - alert: DellOpsMemoryPressure
+        expr: 100 * node_memory_MemAvailable_bytes{job="dell-ops"} / node_memory_MemTotal_bytes{job="dell-ops"} < 10
+        for: 10m
+        labels: {severity: warning, project: infra-shared}
+        annotations:
+          summary: Moins de 10 pour cent de RAM reste disponible sur le Dell Ops
+      - alert: DellOpsThermalHigh
+        expr: node_hwmon_temp_celsius{job="dell-ops"} > 90
+        for: 2m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: Une sonde materielle du Dell Ops depasse 90 degres
+      - alert: DellOpsThermalGuardTripped
+        expr: ops_thermal_guard_tripped == 1
+        for: 0m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: La protection thermique a arrete Ollama ; intervention requise
+      - alert: DellOpsOpenBaoSealed
+        expr: ops_openbao_initialized == 1 and ops_openbao_sealed == 1
+        for: 1m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: OpenBao est scelle et les agents n'ont plus leurs credentials
+      - alert: DellOpsServiceDown
+        expr: ops_service_up == 0
+        for: 2m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: Un service critique du control plane est arrete
+      - alert: DellOpsRebootPending
+        expr: ops_reboot_required == 1
+        for: 24h
+        labels: {severity: warning, project: infra-shared}
+        annotations:
+          summary: Un nouveau noyau attend un redemarrage depuis 24 heures
+      - alert: DellOpsBatteryWorn
+        expr: ops_battery_health_ratio < 0.35
+        for: 1h
+        labels: {severity: warning, project: infra-shared}
+        annotations:
+          summary: Batterie du Dell tres usee ; autonomie de secours non fiable
+      - alert: DellOpsNvmeSmartFailed
+        expr: ops_nvme_smart_healthy == 0
+        for: 1m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: Le controle SMART du NVMe n'est plus sain
+      - alert: DellOpsBrokerBackupVerifyFailed
+        expr: absent(ops_broker_backup_last_verify_ok) or ops_broker_backup_last_verify_ok == 0
+        for: 1m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: La derniere sauvegarde du broker ou sa chaine d'audit n'a pas ete validee
+      - alert: DellOpsBrokerBackupStale
+        expr: absent(ops_broker_backup_last_success_timestamp_seconds) or time() - ops_broker_backup_last_success_timestamp_seconds > 108000
+        for: 10m
+        labels: {severity: warning, project: infra-shared}
+        annotations:
+          summary: Aucune sauvegarde broker validee depuis plus de 30 heures
+      - alert: DellOpsMemoryBackupMetricMissing
+        expr: absent(ops_memory_backup_last_result_ok)
+        for: 10m
+        labels: {severity: warning, project: backup-shared}
+        annotations:
+          summary: La telemetrie de sauvegarde ops-memory est absente
+      - alert: DellOpsMemoryBackupFailed
+        expr: ops_memory_backup_last_result_ok == 0
+        for: 1m
+        labels: {severity: critical, project: backup-shared}
+        annotations:
+          summary: La derniere sauvegarde ops-memory a echoue
+      - alert: DellOpsMemoryBackupStale
+        expr: absent(ops_memory_backup_last_success_timestamp_seconds) or time() - ops_memory_backup_last_success_timestamp_seconds > 108000
+        for: 10m
+        labels: {severity: warning, project: backup-shared}
+        annotations:
+          summary: Aucune sauvegarde ops-memory validee depuis plus de 30 heures
+      - alert: DellOpsMemoryRestoreTestMetricMissing
+        expr: absent(ops_memory_restore_test_last_result_ok)
+        for: 10m
+        labels: {severity: warning, project: backup-shared}
+        annotations:
+          summary: La telemetrie du test de restauration ops-memory est absente
+      - alert: DellOpsMemoryRestoreTestFailed
+        expr: ops_memory_restore_test_last_result_ok == 0
+        for: 1m
+        labels: {severity: critical, project: backup-shared}
+        annotations:
+          summary: Le dernier test de restauration ops-memory a echoue
+      - alert: DellOpsMemoryRestoreTestStale
+        expr: absent(ops_memory_restore_test_last_success_timestamp_seconds) or time() - ops_memory_restore_test_last_success_timestamp_seconds > 777600
+        for: 30m
+        labels: {severity: warning, project: backup-shared}
+        annotations:
+          summary: Aucun test de restauration ops-memory valide depuis plus de 9 jours
+      - alert: DellOpsOpenBaoBackupVerifyFailed
+        expr: absent(ops_openbao_backup_last_verify_ok) or ops_openbao_backup_last_verify_ok == 0
+        for: 1m
+        labels: {severity: critical, project: backup-shared}
+        annotations:
+          summary: La derniere sauvegarde Raft OpenBao chiffree n'a pas ete validee
+      - alert: DellOpsOpenBaoBackupStale
+        expr: absent(ops_openbao_backup_last_success_timestamp_seconds) or time() - ops_openbao_backup_last_success_timestamp_seconds > 108000
+        for: 10m
+        labels: {severity: warning, project: backup-shared}
+        annotations:
+          summary: Aucune sauvegarde Raft OpenBao validee depuis plus de 30 heures
+      - alert: DellOpsNvidiaMokPending
+        expr: ops_nvidia_mok_enrolled == 0
+        for: 24h
+        labels: {severity: warning, project: infra-shared}
+        annotations:
+          summary: La cle Secure Boot du pilote NVIDIA attend encore son enrolement
+      - alert: DellOpsSecureBootDisabled
+        expr: ops_secure_boot_enabled == 0
+        for: 5m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: Secure Boot est desactive sur le Dell Ops
+      - alert: DellOpsRootUnencrypted
+        expr: ops_root_filesystem_encrypted == 0
+        for: 1h
+        labels: {severity: warning, project: infra-shared}
+        annotations:
+          summary: Le disque systeme du Dell Ops n'est pas chiffre
+      - alert: DellOpsOpenBaoTlsExpiring
+        expr: ops_openbao_tls_not_after_timestamp_seconds - time() < 2592000
+        for: 10m
+        labels: {severity: warning, project: infra-shared}
+        annotations:
+          summary: Le certificat TLS local OpenBao expire dans moins de 30 jours
+      - alert: DellOpsAuditInactive
+        expr: absent(ops_audit_active) or ops_audit_active == 0
+        for: 5m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: L'audit Linux du control plane n'est pas actif
+      - alert: DellOpsAuditEventsLost
+        expr: ops_audit_lost_events > 0
+        for: 1m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: Le noyau signale des evenements d'audit perdus
+      - alert: DellOpsAideDatabaseMissing
+        expr: absent(ops_aide_database_present) or ops_aide_database_present == 0
+        for: 5m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: La base de reference AIDE est absente ou non sure
+      - alert: DellOpsAideChangesDetected
+        expr: ops_aide_last_check_changes_detected == 1
+        for: 0m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: AIDE a detecte des changements d'integrite systeme
+      - alert: DellOpsAideCheckError
+        expr: absent(ops_aide_last_check_error) or ops_aide_last_check_error == 1
+        for: 5m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: Le controle d'integrite AIDE est indisponible ou en erreur
+      - alert: DellOpsAideCheckStale
+        expr: absent(ops_aide_last_check_timestamp_seconds) or time() - ops_aide_last_check_timestamp_seconds > 129600
+        for: 10m
+        labels: {severity: warning, project: infra-shared}
+        annotations:
+          summary: Aucun controle AIDE valide depuis plus de 36 heures
+      - alert: DellOpsHermesCredentialMissing
+        expr: ops_hermes_activation_requested == 1 and ops_hermes_openbao_credential_present == 0
+        for: 5m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: Hermes est demande mais son credential OpenBao chiffre est absent
+      - alert: DellOpsHermesCredentialRotationDue
+        expr: ops_hermes_openbao_secret_id_age_seconds > 2160000 and ops_hermes_openbao_secret_id_age_seconds <= 2505600
+        for: 1h
+        labels: {severity: warning, project: infra-shared}
+        annotations:
+          summary: Le SecretID OpenBao de Hermes doit etre renouvele avant 30 jours
+      - alert: DellOpsHermesCredentialExpiring
+        expr: ops_hermes_openbao_secret_id_age_seconds > 2505600
+        for: 10m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: Le SecretID OpenBao de Hermes expire dans moins d'un jour
+      - alert: DellOpsZulipCredentialMissing
+        expr: ops_zulip_bridge_activation_requested == 1 and ops_zulip_openbao_credential_present == 0
+        for: 5m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: Le bridge Zulip est active mais son credential OpenBao chiffre est absent
+      - alert: DellOpsZulipCredentialRotationDue
+        expr: ops_zulip_openbao_secret_id_age_seconds > 2160000 and ops_zulip_openbao_secret_id_age_seconds <= 2505600
+        for: 1h
+        labels: {severity: warning, project: infra-shared}
+        annotations:
+          summary: Le SecretID OpenBao de Zulip doit etre renouvele avant 30 jours
+      - alert: DellOpsZulipCredentialExpiring
+        expr: ops_zulip_openbao_secret_id_age_seconds > 2505600
+        for: 10m
+        labels: {severity: critical, project: infra-shared}
+        annotations:
+          summary: Le SecretID OpenBao de Zulip expire dans moins d'un jour
+      - alert: DellOpsV1CheckFailure
+        expr: ops_v1_check_failures > 0
+        for: 1m
+        labels: {severity: critical, project: monitoring-shared}
+        annotations:
+          summary: Une sonde deterministe Ops V1 est en echec
+      - alert: DellOpsV1CheckResultInvalid
+        expr: ops_v1_observation_enabled == 1 and ops_v1_check_result_valid == 0
+        for: 2m
+        labels: {severity: critical, project: monitoring-shared}
+        annotations:
+          summary: Le resultat des sondes Ops V1 est absent ou invalide
+      - alert: DellOpsV1ChecksStale
+        expr: ops_v1_observation_enabled == 1 and (absent(ops_v1_check_result_timestamp_seconds) or time() - ops_v1_check_result_timestamp_seconds > 900)
+        for: 2m
+        labels: {severity: critical, project: monitoring-shared}
+        annotations:
+          summary: Les sondes Ops V1 actives ne produisent plus de resultat frais

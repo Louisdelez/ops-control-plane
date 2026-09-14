@@ -1,0 +1,5 @@
+d /var/lib/ops-broker 0700 opsbroker opsbroker -
+d /var/backups/ops-broker 0700 opsbroker opsbroker -
+d /run/ops-broker 0770 opsbroker opsbroker-api -
+d /var/lib/node-exporter 0750 root node-exporter -
+d /var/lib/node-exporter/textfile 0750 root node-exporter -

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-begin-bootstrap"
+description = "Enables the begin_bootstrap command without any pre-configured scope."
+commands.allow = ["begin_bootstrap"]
+
+[[permission]]
+identifier = "deny-begin-bootstrap"
+description = "Denies the begin_bootstrap command without any pre-configured scope."
+commands.deny = ["begin_bootstrap"]

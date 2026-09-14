@@ -1,0 +1,221 @@
+---
+# Derived from the official Zulip 12.2 Compose topology.  Deployment-specific
+# changes are deliberately limited to digest pins, linux/amd64, loopback-only
+# HTTPS, private networks, /run-backed file secrets, SELinux-safe binds, and
+# bounded local logs.
+name: zulip-local
+
+x-local-logging: &local-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  database:
+    image: "zulip/zulip-postgresql:14@sha256:e71ba8616fa42cdc1b248f51263d9290c29681cb8c1992eb9b498af0bb656b29"
+    platform: linux/amd64
+    dns: ["127.0.0.1"]
+    restart: "${ZULIP_LOCAL_RESTART_POLICY:-unless-stopped}"
+    secrets:
+      - zulip__postgres_password
+    environment:
+      POSTGRES_DB: "zulip"
+      POSTGRES_USER: "zulip"
+      POSTGRES_PASSWORD_FILE: /run/secrets/zulip__postgres_password
+    volumes:
+      - "postgresql-14:/var/lib/postgresql/data:rw"
+    networks:
+      - backend
+    attach: false
+    logging: *local-logging
+
+  memcached:
+    image: "memcached:alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7"
+    platform: linux/amd64
+    dns: ["127.0.0.1"]
+    restart: "${ZULIP_LOCAL_RESTART_POLICY:-unless-stopped}"
+    command:
+      - "sh"
+      - "-euc"
+      - |
+        umask 077
+        echo 'mech_list: plain' > "$$SASL_CONF_PATH"
+        echo "zulip@$$HOSTNAME:$$(cat $$MEMCACHED_PASSWORD_FILE)" > "$$MEMCACHED_SASL_PWDB"
+        echo "zulip@localhost:$$(cat $$MEMCACHED_PASSWORD_FILE)" >> "$$MEMCACHED_SASL_PWDB"
+        exec memcached -S
+    secrets:
+      - zulip__memcached_password
+    environment:
+      SASL_CONF_PATH: "/run/zulip-local/memcached.conf"
+      MEMCACHED_SASL_PWDB: "/run/zulip-local/memcached-sasl-db"
+      MEMCACHED_PASSWORD_FILE: /run/secrets/zulip__memcached_password
+    tmpfs:
+      - "/run/zulip-local:rw,nosuid,nodev,noexec,size=1m,mode=0700,uid=11211,gid=11211"
+    networks:
+      - backend
+    attach: false
+    logging: *local-logging
+
+  rabbitmq:
+    image: "rabbitmq:4.2@sha256:15e7b5e60af2d2147f8d74eef5b93c29501cd644361ca93bc854e409c2dde624"
+    platform: linux/amd64
+    dns: ["127.0.0.1"]
+    restart: "${ZULIP_LOCAL_RESTART_POLICY:-unless-stopped}"
+    command:
+      - "sh"
+      - "-euc"
+      - |
+        rabbitmq_config=/run/zulip-local/rabbitmq.conf
+        rabbitmq_config_tmp=$$(mktemp /run/zulip-local/.rabbitmq.XXXXXX)
+        trap 'rm -f -- "$$rabbitmq_config_tmp"' EXIT
+        umask 077
+        {
+          printf "default_user = 'zulip'\n"
+          printf "default_pass = '"
+          cat /run/secrets/zulip__rabbitmq_password
+          printf "'\n"
+        } > "$$rabbitmq_config_tmp"
+        chown rabbitmq:rabbitmq "$$rabbitmq_config_tmp"
+        chmod 0400 "$$rabbitmq_config_tmp"
+        mv -fT -- "$$rabbitmq_config_tmp" "$$rabbitmq_config"
+        trap - EXIT
+        exec docker-entrypoint.sh rabbitmq-server
+    secrets:
+      - zulip__rabbitmq_password
+    environment:
+      # The main file is ephemeral; the image's default /etc/rabbitmq/conf.d
+      # fragments remain visible and are loaded independently.
+      RABBITMQ_CONFIG_FILE: /run/zulip-local/rabbitmq.conf
+    tmpfs:
+      - "/run/zulip-local:rw,nosuid,nodev,noexec,size=1m,mode=0700,uid=999,gid=999"
+    volumes:
+      - "rabbitmq:/var/lib/rabbitmq:rw"
+    networks:
+      - backend
+    attach: false
+    logging: *local-logging
+
+  redis:
+    image: "redis:alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576"
+    platform: linux/amd64
+    dns: ["127.0.0.1"]
+    restart: "${ZULIP_LOCAL_RESTART_POLICY:-unless-stopped}"
+    command:
+      - "sh"
+      - "-euc"
+      - |
+        redis_config=/run/zulip-local/redis.conf
+        redis_config_tmp=$$(mktemp /run/zulip-local/.redis.XXXXXX)
+        trap 'rm -f -- "$$redis_config_tmp"' EXIT
+        umask 077
+        printf 'requirepass ' > "$$redis_config_tmp"
+        cat "$$REDIS_PASSWORD_FILE" >> "$$redis_config_tmp"
+        printf '\n' >> "$$redis_config_tmp"
+        chown redis:redis "$$redis_config_tmp"
+        chmod 0400 "$$redis_config_tmp"
+        mv -fT -- "$$redis_config_tmp" "$$redis_config"
+        trap - EXIT
+        exec /usr/local/bin/docker-entrypoint.sh redis-server "$$redis_config"
+    secrets:
+      - zulip__redis_password
+    environment:
+      REDIS_PASSWORD_FILE: /run/secrets/zulip__redis_password
+    tmpfs:
+      - "/run/zulip-local:rw,nosuid,nodev,noexec,size=1m,mode=0700,uid=999,gid=1000"
+    volumes:
+      - "redis:/data:rw"
+    networks:
+      - backend
+    attach: false
+    logging: *local-logging
+
+  zulip:
+    image: "ghcr.io/zulip/zulip-server:12.2-0@sha256:765f0ab3caa49041989132ee1879d98dbab1df7695c27e713eac1f114d167755"
+    platform: linux/amd64
+    dns: ["127.0.0.1"]
+    restart: "${ZULIP_LOCAL_RESTART_POLICY:-unless-stopped}"
+    ports:
+      - name: https
+        target: 443
+        published: "8443"
+        host_ip: "127.0.0.1"
+        protocol: tcp
+        app_protocol: https
+    secrets:
+      # Not prefixed with zulip__: the upstream entrypoint therefore never
+      # imports this transient bootstrap password into zulip-secrets.conf.
+      - admin_bootstrap_password
+    environment:
+      SETTING_REMOTE_POSTGRES_HOST: "database"
+      SETTING_MEMCACHED_LOCATION: "memcached:11211"
+      SETTING_RABBITMQ_HOST: "rabbitmq"
+      SETTING_REDIS_HOST: "redis"
+      SETTING_EXTERNAL_HOST: "zulip.ops.local:8443"
+      SETTING_ZULIP_ADMINISTRATOR: "admin@ops.local"
+      CERTIFICATES: "manual"
+      AUTO_BACKUP_ENABLED: "False"
+      ZULIP_AUTH_BACKENDS: "EmailAuthBackend"
+    volumes:
+      - "zulip:/data:rw"
+      # The upstream entrypoint requires zulip-secrets.conf under /data. This
+      # exact-file bind keeps the complete configuration in host tmpfs.
+      # Short bind syntax is deliberate: Docker's Mount API ignores SELinux
+      # relabeling for long binds. Runtime preflight prevents absent sources.
+      - "/run/zulip-local/zulip-secrets.conf:/data/zulip-secrets.conf:rw,Z"
+      - "/run/zulip-local/tls:/data/certs/manual:ro,Z"
+    ulimits:
+      nofile:
+        soft: 1000000
+        hard: 1048576
+    depends_on:
+      - database
+      - memcached
+      - rabbitmq
+      - redis
+    networks:
+      - frontend
+      - backend
+    logging: *local-logging
+
+secrets:
+  zulip__postgres_password:
+    file: /run/zulip-local/secrets/postgres_password
+  zulip__memcached_password:
+    file: /run/zulip-local/secrets/memcached_password
+  zulip__rabbitmq_password:
+    file: /run/zulip-local/secrets/rabbitmq_password
+  zulip__redis_password:
+    file: /run/zulip-local/secrets/redis_password
+  admin_bootstrap_password:
+    file: /run/zulip-local/admin/admin-password
+
+networks:
+  frontend:
+    name: zulip-local_frontend
+    internal: false
+    driver_opts:
+      com.docker.network.bridge.name: zulip-frontend
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+    ipam:
+      config:
+        - subnet: 172.30.11.0/24
+  backend:
+    name: zulip-local_backend
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.name: zulip-backend
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
+
+volumes:
+  zulip:
+    name: zulip-local-zulip
+  postgresql-14:
+    name: zulip-local-postgresql-14
+  rabbitmq:
+    name: zulip-local-rabbitmq
+  redis:
+    name: zulip-local-redis

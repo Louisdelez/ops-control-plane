@@ -1,0 +1,14 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: local-null
+  group_by: [alertname, project]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+# V0 keeps alerts durable and visible in Alertmanager, but deliberately sends
+# nothing off-host until the authenticated Zulip bridge is configured.
+receivers:
+  - name: local-null

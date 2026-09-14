@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ops.local/schemas/ollama-benchmark-report-v1.json",
+  "title": "Rapport du benchmark Ollama",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "campaign",
+    "inputs",
+    "host",
+    "models",
+    "selection"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "generated_at": {"type": "string"},
+    "campaign": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "complete", "interruption_reason"],
+      "properties": {
+        "status": {"enum": ["completed", "interrupted"]},
+        "complete": {"type": "boolean"},
+        "interruption_reason": {"type": ["string", "null"]}
+      }
+    },
+    "inputs": {"type": "object"},
+    "host": {"type": "object"},
+    "models": {"type": "array"},
+    "selection": {
+      "type": "object",
+      "required": [
+        "eligible_models",
+        "ranked_candidates",
+        "automatic_promotion",
+        "promotion_performed",
+        "requires_human_approval"
+      ]
+    }
+  }
+}

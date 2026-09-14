@@ -1,0 +1,15 @@
+id: network.publish-zulip.v2
+version: 1
+project: infra-shared
+action_class: C
+description: Activer le paquet borné HTTPS zulip.example.org via VPS WireGuard NAS et relais SSH Dell, certificat public et migration locale avec retour arrière
+timeout_seconds: 20
+command:
+  argv: [/usr/bin/sudo, -n, /usr/local/libexec/ops-runbooks/publish-zulip-v2, "{bundle_sha256}"]
+parameters:
+  bundle_sha256:
+    type: enum
+    values: [5174ea05576e4f39fe260b66c16fdcfc151de593e6739e499d3ed5934060766a]
+output:
+  max_bytes: 4096
+  redact: true

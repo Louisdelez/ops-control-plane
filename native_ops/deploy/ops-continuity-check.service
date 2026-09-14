@@ -1,0 +1,13 @@
+[Unit]
+Description=Verify service readiness and durable mission memory across boots
+After=ops-memory-sync.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ops-native/venv/bin/python /home/ops-user/ops-control-plane/native_ops/continuity_check.py
+Environment=PYTHONPATH=/opt/ops-memory/src
+TimeoutStartSec=180
+UMask=0077
+MemoryMax=200M
+TasksMax=32
+NoNewPrivileges=yes

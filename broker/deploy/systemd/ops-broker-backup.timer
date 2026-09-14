@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily verified backup of ops-broker state
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=15min
+AccuracySec=1min
+Persistent=yes
+Unit=ops-broker-backup.service
+
+[Install]
+WantedBy=timers.target

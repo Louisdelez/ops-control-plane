@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily age-encrypted OpenBao Raft snapshot
+
+[Timer]
+OnCalendar=*-*-* 03:47:00
+RandomizedDelaySec=10min
+Persistent=true
+AccuracySec=1min
+Unit=openbao-raft-backup.service
+
+[Install]
+WantedBy=timers.target

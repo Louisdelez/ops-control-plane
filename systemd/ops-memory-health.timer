@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch Ops memory and Qdrant independently
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=true
+Unit=ops-memory-health.service
+
+[Install]
+WantedBy=timers.target

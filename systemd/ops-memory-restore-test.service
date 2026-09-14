@@ -1,0 +1,44 @@
+[Unit]
+Description=Test the latest ops-memory backup in an isolated Qdrant container
+Documentation=file:/usr/local/share/doc/ops-control-plane/runbooks/memory-backup-restore.md
+After=local-fs.target
+ConditionPathExists=/etc/ops-memory/backup.toml
+ConditionPathExists=/etc/ops-memory/qdrant.env
+OnSuccess=ops-memory-restore-test-metric-success.service
+OnFailure=ops-memory-restore-test-metric-failure.service
+
+[Service]
+Type=oneshot
+User=root
+Group=ops-memory-backup
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/ops-memory-backup/bin/ops-memory-backup --config /etc/ops-memory/backup.toml restore-test --backup-id latest
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=30min
+# Rootful Podman must enter Fedora's SELinux container_runtime_t domain and
+# create the container's private devices, hostname, cgroup and network sysctls.
+# PrivateDevices, ProtectHostname, ProtectControlGroups, ProtectKernelTunables,
+# ProcSubset=pid and service-level NoNewPrivileges prevent those operations on
+# Fedora.  The root-owned host helper is still filesystem-confined below; the
+# ephemeral container itself uses no-new-privileges, cap-drop=all, a read-only
+# root filesystem and strict CPU/RAM/PID limits.
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectProc=invisible
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+ReadOnlyPaths=/var /var/backups/ops-memory /etc/ops-memory/qdrant.env
+ReadWritePaths=/var/tmp /var/lib/containers -/run/containers -/run/libpod -/run/crun -/run/podman
+NoExecPaths=/var/backups/ops-memory
+LimitNOFILE=4096
+TasksMax=512
+MemoryMax=1G

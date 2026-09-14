@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodically verify the ops-broker audit hash chain
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+RandomizedDelaySec=1min
+AccuracySec=30s
+Unit=ops-broker-audit-verify.service
+
+[Install]
+WantedBy=timers.target

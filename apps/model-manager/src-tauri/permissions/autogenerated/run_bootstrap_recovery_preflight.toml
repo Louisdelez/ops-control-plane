@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-run-bootstrap-recovery-preflight"
+description = "Enables the run_bootstrap_recovery_preflight command without any pre-configured scope."
+commands.allow = ["run_bootstrap_recovery_preflight"]
+
+[[permission]]
+identifier = "deny-run-bootstrap-recovery-preflight"
+description = "Denies the run_bootstrap_recovery_preflight command without any pre-configured scope."
+commands.deny = ["run_bootstrap_recovery_preflight"]

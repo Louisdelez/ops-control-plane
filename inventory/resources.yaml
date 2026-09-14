@@ -1,0 +1,35 @@
+version: 1
+resources:
+  - id: dell-control
+    kind: control-plane
+    owner: infra-shared
+    connection: local
+    environment: operations
+    criticality: high
+  - id: edge-vps
+    kind: network-edge
+    owner: network-shared
+    connection: ssh:vps
+    environment: production
+    criticality: critical
+    shared_by: [minecraft, infra-shared, monitoring-shared, backup-shared]
+  - id: prod
+    kind: container-host
+    owner: infra-shared
+    connection: ssh:prod
+    environment: production
+    criticality: critical
+    shared_by: [minecraft, monitoring-shared, backup-shared]
+  - id: nas
+    kind: storage-and-services
+    owner: infra-shared
+    connection: ssh:nas
+    environment: production
+    criticality: critical
+    shared_by: [monitoring-shared, backup-shared]
+  - id: gamebox
+    kind: minecraft-lab
+    owner: minecraft
+    connection: ssh:gamebox
+    environment: lab
+    criticality: medium

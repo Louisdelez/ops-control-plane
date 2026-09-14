@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "skills": [
+    {
+      "name": "backup-verification",
+      "version": 1,
+      "automation": "manual",
+      "project": "backup-shared",
+      "permissions": ["backup:read"],
+      "tests": ["tests/test_ops_v1.py"],
+      "review_required": true
+    },
+    {
+      "name": "deploy-release",
+      "version": 1,
+      "automation": "manual",
+      "project": "infra-shared",
+      "permissions": ["release:plan", "release:class-c-request"],
+      "tests": ["tests/test_ops_v1.py"],
+      "review_required": true
+    },
+    {
+      "name": "incident-triage",
+      "version": 1,
+      "automation": "manual",
+      "project": "infra-shared",
+      "permissions": ["incident:read", "runbook:list"],
+      "tests": ["tests/test_ops_v1.py"],
+      "review_required": true
+    },
+    {
+      "name": "shared-infra-change",
+      "version": 1,
+      "automation": "manual",
+      "project": "infra-shared",
+      "permissions": ["inventory:read", "change:class-c-request"],
+      "tests": ["tests/test_ops_v1.py"],
+      "review_required": true
+    },
+    {
+      "name": "ops-deterministic-workflows",
+      "version": 1,
+      "automation": "manual",
+      "project": "infra-shared",
+      "permissions": ["ops-v1:read", "release:class-c-request"],
+      "tests": ["tests/test_ops_v1.py"],
+      "review_required": true
+    }
+  ]
+}

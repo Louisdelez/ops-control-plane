@@ -1,0 +1,74 @@
+[Unit]
+Description=Fail-closed Zulip mobile Ops, approval, alert and report bridge
+Documentation=https://zulip.com/api/register-queue
+Wants=network-online.target
+After=network-online.target openbao.service ops-broker.socket zulip-alertmanager-query.socket
+Requires=ops-broker.socket zulip-alertmanager-query.socket
+Requisite=openbao.service
+ConditionPathExists=/usr/local/libexec/zulip-openbao-launcher
+ConditionPathExists=/etc/pki/ca-trust/source/anchors/openbao-local.crt
+ConditionPathExists=/etc/credstore.encrypted/zulip-openbao-role-id
+ConditionPathExists=/etc/credstore.encrypted/zulip-openbao-secret-id
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=zulipbridge
+Group=zulipbridge
+SupplementaryGroups=opsbroker-api ops-readers
+UMask=0077
+WorkingDirectory=/opt/ops-control-plane/bridges/zulip
+ExecCondition=/usr/bin/test -S /run/ops-broker/api.sock
+ExecCondition=/usr/bin/test -S /run/zulip-alertmanager-query/api.sock
+ExecStart=/usr/local/libexec/zulip-openbao-launcher
+
+# systemd decrypts these host+TPM2 blobs into a private service credential
+# directory.  The launcher revokes its OpenBao token before exec and passes a
+# newly constructed allowlisted environment; no plaintext dotenv file exists.
+LoadCredentialEncrypted=zulip-openbao-role-id:/etc/credstore.encrypted/zulip-openbao-role-id
+LoadCredentialEncrypted=zulip-openbao-secret-id:/etc/credstore.encrypted/zulip-openbao-secret-id
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+
+StateDirectory=zulip-approval-bridge
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+PrivateDevices=yes
+DevicePolicy=closed
+ProtectSystem=strict
+ProtectHome=tmpfs
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+RemoveIPC=yes
+KeyringMode=private
+TasksMax=64
+MemoryHigh=192M
+MemoryMax=256M
+MemorySwapMax=0
+LimitCORE=0
+LimitNOFILE=256
+
+[Install]
+WantedBy=multi-user.target

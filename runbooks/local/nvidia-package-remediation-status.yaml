@@ -1,0 +1,16 @@
+id: local.nvidia-package-remediation-status.v1
+version: 1
+project: infra-shared
+action_class: A
+description: Lire le statut borne de la remediation NVIDIA 580xx
+timeout_seconds: 10
+command:
+  argv:
+    - /usr/bin/sudo
+    - -n
+    - /usr/local/libexec/ops-runbooks/nvidia-package-remediation
+    - status
+parameters: {}
+output:
+  max_bytes: 8192
+  redact: true

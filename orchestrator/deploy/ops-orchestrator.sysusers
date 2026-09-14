@@ -1,0 +1,15 @@
+g opsorchestrator -
+g opsorchestrator-api -
+g opsfinance -
+u opsorchestrator - "Ops model orchestrator" /var/lib/ops-orchestrator /usr/sbin/nologin
+u opsfinance - "Ops provider finance worker" /nonexistent /usr/sbin/nologin
+m opsorchestrator opsorchestrator-api
+m opsorchestrator opsfinance
+m hermesd opsorchestrator-api
+m ops-user opsorchestrator-api
+m minecraft-ops opsorchestrator-api
+m infra-network opsorchestrator-api
+m ops-monitor opsorchestrator-api
+m backup-agent opsorchestrator-api
+m deploy-agent opsorchestrator-api
+m security-audit opsorchestrator-api

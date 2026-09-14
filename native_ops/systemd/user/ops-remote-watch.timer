@@ -1,0 +1,12 @@
+[Unit]
+Description=Observe the four reviewed Ops servers every fifteen minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=30s
+RandomizedDelaySec=30s
+Unit=ops-remote-watch.service
+
+[Install]
+WantedBy=timers.target

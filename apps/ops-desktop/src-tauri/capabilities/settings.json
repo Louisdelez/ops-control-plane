@@ -1,0 +1,16 @@
+{
+  "identifier": "settings",
+  "description": "Local settings page only; no secret read command",
+  "webviews": [
+    "settings"
+  ],
+  "local": true,
+  "permissions": [
+    "allow-settings-state",
+    "allow-settings-enabled",
+    "allow-settings-manage",
+    "allow-provider-tabs",
+    "allow-provider-browser",
+    "allow-settings-providers"
+  ]
+}

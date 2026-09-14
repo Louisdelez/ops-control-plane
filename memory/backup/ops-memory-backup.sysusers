@@ -1,0 +1,3 @@
+g ops-memory-backup -
+m opsmemory ops-memory-backup
+m backup-agent ops-memory-backup

@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Dell Ops V1 deterministic checks every five minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+RandomizedDelaySec=15s
+Unit=ops-v1-observe.service
+
+[Install]
+WantedBy=timers.target

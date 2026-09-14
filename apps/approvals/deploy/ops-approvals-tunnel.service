@@ -1,0 +1,9 @@
+[Unit]
+Description=Encrypted tunnel for Ops Autorisations
+After=network-online.target
+[Service]
+ExecStart=/usr/bin/ssh -N -T -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -R 127.0.0.1:19128:127.0.0.1:9128 vps
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=default.target

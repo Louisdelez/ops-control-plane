@@ -1,0 +1,13 @@
+id: local.health.v1
+version: 1
+project: infra-shared
+action_class: A
+description: Etat borne du poste de controle
+timeout_seconds: 20
+command:
+  argv:
+    - /usr/local/libexec/ops-runbooks/local-health
+parameters: {}
+output:
+  max_bytes: 32768
+  redact: true

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "max_concurrent_actions": 1,
+  "priorities": ["critical", "high", "normal", "low"],
+  "classification": {
+    "critical": ["security-incident", "total-outage", "database-unavailable"],
+    "high": ["user-service-unavailable", "critical-backup-failed"],
+    "normal": ["maintenance", "deployment"],
+    "low": ["periodic-audit", "optimization", "memory-consolidation"]
+  }
+}

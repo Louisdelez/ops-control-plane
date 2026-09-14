@@ -1,0 +1,170 @@
+version: 1
+default: deny
+
+roles:
+  coordinator:
+    projects: [backup-shared, infra-shared, minecraft, monitoring-shared, network-shared]
+    runbooks:
+      - local.health.v1
+      - local.service-status.v1
+      - minecraft.crash-triage.v1
+      - shared.change-request.v1
+    action_classes: [A, C]
+    lifecycle_capabilities:
+      - mission.status.write
+      - mission.context.write
+      - mission.checkpoint.write
+      - mission.record.write
+      - mission.queue.claim
+      - incident.status.write
+      - incident.detail.write
+      - resource.lock
+      - model.trace.write
+
+  infra-operator:
+    projects: [infra-shared]
+    runbooks: [local.restart-once.v1]
+    action_classes: [B]
+
+  minecraft-monitor:
+    projects: [minecraft]
+    runbooks: [minecraft.crash-triage.v1]
+    action_classes: [A]
+
+  network-change-requester:
+    projects: [infra-shared, network-shared]
+    runbooks: [shared.change-request.v1]
+    action_classes: [C]
+
+  monitoring-observer:
+    projects: [backup-shared, infra-shared, minecraft, monitoring-shared, network-shared]
+    runbooks:
+      - local.health.v1
+      - local.service-status.v1
+      - minecraft.crash-triage.v1
+    action_classes: [A]
+    lifecycle_capabilities:
+      - mission.record.write
+      - incident.status.write
+      - incident.detail.write
+      - model.trace.write
+
+  backup-operator:
+    projects: [backup-shared, infra-shared, minecraft]
+    runbooks: [local.health.v1]
+    action_classes: [A]
+    lifecycle_capabilities:
+      - mission.status.write
+      - mission.context.write
+      - mission.checkpoint.write
+      - mission.record.write
+      - mission.queue.claim
+      - incident.status.write
+      - incident.detail.write
+      - resource.lock
+      - model.trace.write
+
+  deployment-operator:
+    projects: [infra-shared, minecraft]
+    runbooks:
+      - local.health.v1
+      - local.service-status.v1
+      - shared.change-request.v1
+    action_classes: [A, C]
+    lifecycle_capabilities:
+      - mission.status.write
+      - mission.context.write
+      - mission.checkpoint.write
+      - mission.record.write
+      - mission.queue.claim
+      - incident.status.write
+      - incident.detail.write
+      - resource.lock
+      - model.trace.write
+
+  security-observer:
+    projects: [backup-shared, infra-shared, minecraft, monitoring-shared, network-shared]
+    runbooks:
+      - local.health.v1
+      - local.service-status.v1
+      - minecraft.crash-triage.v1
+    action_classes: [A]
+    lifecycle_capabilities:
+      - mission.context.write
+      - mission.checkpoint.write
+      - mission.record.write
+      - incident.status.write
+      - incident.detail.write
+      - model.trace.write
+
+  # The host-wide release worker is intentionally narrower than the general
+  # supervised role. AGENTS.md fixes this deployment identity to Codex.
+  codex-control-plane-deployer:
+    projects: [infra-shared]
+    runbooks:
+      - local.control-plane-deployment-status.v1
+    action_classes: [A, C]
+
+  supervised-operator:
+    projects: [backup-shared, infra-shared, minecraft, monitoring-shared, network-shared]
+    runbooks:
+      - local.health.v1
+      - local.nvidia-package-remediation.v1
+      - local.nvidia-package-remediation-status.v1
+      - local.service-status.v1
+      - local.restart-once.v1
+      - minecraft.crash-triage.v1
+      - shared.change-request.v1
+      - inventory.remote-preflight.v1
+      - inventory.remote-services.v1
+      - inventory.public-zulip-preflight.v1
+      - network.publish-zulip.v1
+      - backup.recovery-seed-copy.v1
+      - backup.periodic-recovery-enable.v1
+      - inventory.locate-prod.v1
+    action_classes: [A, B, C]
+    lifecycle_capabilities:
+      - mission.status.write
+      - mission.context.write
+      - mission.checkpoint.write
+      - mission.record.write
+      - mission.queue.claim
+      - incident.status.write
+      - incident.detail.write
+      - resource.lock
+      - model.trace.write
+
+  # Intake humain via Zulip: créer/lire une mission et rouvrir uniquement une
+  # mission en pause. Les routes UDS approvals-only ne lui exposent aucun
+  # runbook, incident, secret ni endpoint d'exécution.
+  zulip-mobile-intake:
+    projects: [backup-shared, infra-shared, minecraft, monitoring-shared, network-shared]
+    runbooks: []
+    action_classes: []
+    lifecycle_capabilities:
+      - mission.status.write
+      - mission.record.write
+
+actors:
+  hermes-coordinator:
+    roles: [coordinator]
+  infra-operator:
+    roles: [infra-operator]
+  minecraft-monitor:
+    roles: [minecraft-monitor]
+  infra-network:
+    roles: [network-change-requester]
+  monitoring-shared:
+    roles: [monitoring-observer]
+  backup-shared:
+    roles: [backup-operator]
+  deploy-ops:
+    roles: [deployment-operator]
+  security-ops:
+    roles: [security-observer]
+  codex-supervised:
+    roles: [supervised-operator, codex-control-plane-deployer]
+  claude-supervised:
+    roles: [supervised-operator]
+  zulip-mobile:
+    roles: [zulip-mobile-intake]

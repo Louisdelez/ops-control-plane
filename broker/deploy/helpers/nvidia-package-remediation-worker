@@ -1,0 +1,559 @@
+#!/usr/bin/python3
+"""Fixed NVIDIA 580xx package transaction, run only by a root systemd unit."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from typing import Sequence
+
+
+OPERATION = "ensure-580xx"
+EXPECTED_OS_ID = "fedora"
+EXPECTED_OS_VERSION = "44"
+EXPECTED_PCI_VENDOR = "0x10de"
+EXPECTED_PCI_DEVICE = "0x1c8d"
+EXPECTED_PCI_ID = "10de:1c8d"
+
+OS_RELEASE = Path("/etc/os-release")
+PCI_DEVICES_ROOT = Path("/sys/bus/pci/devices")
+SECURE_BOOT_EFIVARS = Path("/sys/firmware/efi/efivars")
+AKMOD_CERTIFICATE = Path("/etc/pki/akmods/certs/public_key.der")
+LOADED_MODULE_VERSION = Path("/sys/module/nvidia/version")
+NOUVEAU_MODULE = Path("/sys/module/nouveau")
+RESULT_PATH = Path("/run/ops-nvidia-package-remediation/result.json")
+MAX_RESULT_BYTES = 8192
+RESULT_OWNER_UID = 0
+
+DNF = "/usr/bin/dnf5"
+RPM = "/usr/bin/rpm"
+AKMODS = "/usr/bin/akmods"
+MODINFO = "/usr/bin/modinfo"
+MOKUTIL = "/usr/bin/mokutil"
+OPENSSL = "/usr/bin/openssl"
+REQUIRED_COMMANDS = (DNF, RPM, AKMODS, MODINFO, MOKUTIL, OPENSSL)
+
+# Every package and option is compiled into this root-owned worker. Neither the
+# broker nor the human approval can inject a package, repository or option.
+TARGET_PACKAGES = (
+    "akmod-nvidia-580xx",
+    "xorg-x11-drv-nvidia-580xx",
+    "xorg-x11-drv-nvidia-580xx-cuda",
+)
+REMOVED_PACKAGES = (
+    "xorg-x11-drv-nvidia-libs",
+    "xorg-x11-drv-nvidia-cuda-libs",
+    "xorg-x11-drv-nvidia-kmodsrc",
+)
+CONFLICTING_PACKAGES = (
+    "akmod-nvidia",
+    "nvidia-settings",
+    "xorg-x11-drv-nvidia",
+    "xorg-x11-drv-nvidia-cuda",
+    "xorg-x11-drv-nvidia-power",
+    *REMOVED_PACKAGES,
+)
+DNF_REMOVE_TRANSACTION = (
+    DNF,
+    "--assumeyes",
+    "remove",
+    "--no-autoremove",
+    *REMOVED_PACKAGES,
+)
+DNF_INSTALL_TRANSACTION = (
+    DNF,
+    "--assumeyes",
+    "install",
+    "--allowerasing",
+    "akmod-nvidia-580xx",
+    "xorg-x11-drv-nvidia-580xx-cuda",
+)
+COMMAND_TIMEOUT_SECONDS = 600
+POST_INSTALL_WAIT_SECONDS = 300
+POST_BUILD_WAIT_SECONDS = 60
+AKMOD_ATTEMPTS = 2
+AKMOD_RETRY_DELAY_SECONDS = 10
+STATE_POLL_SECONDS = 5
+
+ENVIRONMENT = {
+    "PATH": "/usr/sbin:/usr/bin",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+}
+KERNEL_RELEASE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+PACKAGE_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+~:-]{0,127}$")
+SIGNER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._+:@/=-]{0,255}$")
+KEY_IDENTIFIER = re.compile(
+    r"^[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){15,63}$"
+)
+CERTIFICATE_SERIAL = re.compile(r"^serial=([0-9A-Fa-f]{2,128})$")
+
+
+class RemediationError(RuntimeError):
+    def __init__(self, code: str, status: int = 1) -> None:
+        super().__init__(code)
+        self.code = code
+        self.status = status
+
+
+@dataclass(frozen=True)
+class SigningTrust:
+    common_name: str
+    certificate_serial: str
+
+
+def emit(payload: dict[str, object]) -> bool:
+    """Publish one bounded JSON result atomically and mirror it to the journal."""
+
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    encoded = serialized.encode("utf-8")
+    print(serialized)
+    if len(encoded) > MAX_RESULT_BYTES:
+        return False
+    result_directory = RESULT_PATH.parent
+    try:
+        directory_metadata = result_directory.stat(follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(directory_metadata.st_mode)
+            or directory_metadata.st_uid != RESULT_OWNER_UID
+        ):
+            return False
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".result.",
+            suffix=".tmp",
+            dir=result_directory,
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(encoded)
+                output.write(b"\n")
+                output.flush()
+                os.fsync(output.fileno())
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, RESULT_PATH)
+            directory_descriptor = os.open(
+                result_directory,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC,
+            )
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
+        finally:
+            temporary.unlink(missing_ok=True)
+    except OSError:
+        return False
+    return True
+
+
+def effective_uid() -> int:
+    return os.geteuid()
+
+
+def _os_release_values() -> dict[str, str]:
+    try:
+        raw = OS_RELEASE.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RemediationError("os_release_unavailable", 65) from exc
+    if len(raw.encode("utf-8")) > 65_536:
+        raise RemediationError("os_release_invalid", 65)
+    values: dict[str, str] = {}
+    for line in raw.splitlines():
+        name, separator, value = line.partition("=")
+        if separator and name in {"ID", "VERSION_ID"}:
+            values[name] = value.strip().strip('"\'')
+    return values
+
+
+def _expected_pci_device_present() -> bool:
+    try:
+        device_directories = tuple(PCI_DEVICES_ROOT.iterdir())
+    except OSError:
+        return False
+    for device_directory in device_directories:
+        try:
+            vendor = (
+                (device_directory / "vendor").read_text(encoding="ascii").strip().lower()
+            )
+            device = (
+                (device_directory / "device").read_text(encoding="ascii").strip().lower()
+            )
+        except OSError:
+            continue
+        if vendor == EXPECTED_PCI_VENDOR and device == EXPECTED_PCI_DEVICE:
+            return True
+    return False
+
+
+def validate_platform() -> None:
+    values = _os_release_values()
+    if values.get("ID") != EXPECTED_OS_ID or values.get("VERSION_ID") != EXPECTED_OS_VERSION:
+        raise RemediationError("unsupported_operating_system", 65)
+    if not _expected_pci_device_present():
+        raise RemediationError("expected_gpu_not_found", 65)
+
+
+def validate_commands() -> None:
+    if any(
+        not Path(command).is_file() or not os.access(command, os.X_OK)
+        for command in REQUIRED_COMMANDS
+    ):
+        raise RemediationError("required_command_missing", 69)
+
+
+def run_command(
+    argv: Sequence[str],
+    *,
+    timeout: int,
+    capture: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            list(argv),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=ENVIRONMENT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RemediationError("command_timed_out") from exc
+    except OSError as exc:
+        raise RemediationError("command_failed") from exc
+
+
+def _secure_boot_enabled() -> bool:
+    try:
+        candidates = tuple(SECURE_BOOT_EFIVARS.glob("SecureBoot-*"))
+    except OSError:
+        return False
+    if len(candidates) != 1:
+        return False
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(candidates[0], flags)
+    except OSError:
+        return False
+    try:
+        value = os.read(descriptor, 6)
+    except OSError:
+        return False
+    finally:
+        os.close(descriptor)
+    return len(value) == 5 and value[4] == 1
+
+
+def _certificate_common_name() -> str:
+    completed = run_command(
+        (
+            OPENSSL,
+            "x509",
+            "-inform",
+            "DER",
+            "-in",
+            str(AKMOD_CERTIFICATE),
+            "-noout",
+            "-subject",
+            "-nameopt",
+            "RFC2253",
+        ),
+        timeout=10,
+        capture=True,
+    )
+    if completed.returncode != 0:
+        return ""
+    subject = completed.stdout.strip()
+    if len(subject.encode("utf-8")) > 1024 or "\x00" in subject:
+        return ""
+    if subject.startswith("subject="):
+        subject = subject.removeprefix("subject=")
+    matches = [
+        match.group(1).strip()
+        for field in subject.split(",")
+        if (match := re.fullmatch(r"CN\s*=\s*(.+)", field)) is not None
+    ]
+    if len(matches) != 1:
+        return ""
+    common_name = matches[0]
+    return common_name if SIGNER_NAME.fullmatch(common_name) else ""
+
+
+def _certificate_serial() -> str:
+    completed = run_command(
+        (
+            OPENSSL,
+            "x509",
+            "-inform",
+            "DER",
+            "-in",
+            str(AKMOD_CERTIFICATE),
+            "-noout",
+            "-serial",
+        ),
+        timeout=10,
+        capture=True,
+    )
+    if completed.returncode != 0:
+        return ""
+    if len(completed.stdout.encode("utf-8")) > 1024 or "\x00" in completed.stdout:
+        return ""
+    lines = completed.stdout.strip().splitlines()
+    if len(lines) != 1:
+        return ""
+    match = CERTIFICATE_SERIAL.fullmatch(lines[0].strip())
+    if match is None or len(match.group(1)) % 2 != 0:
+        return ""
+    hexadecimal = match.group(1).upper()
+    normalized = ":".join(
+        hexadecimal[index : index + 2] for index in range(0, len(hexadecimal), 2)
+    )
+    return normalized if KEY_IDENTIFIER.fullmatch(normalized) else ""
+
+
+def _mok_key_enrolled() -> bool:
+    completed = run_command(
+        (MOKUTIL, "--test-key", str(AKMOD_CERTIFICATE)),
+        timeout=10,
+    )
+    return completed.returncode == 0
+
+
+def validate_secure_boot_trust() -> SigningTrust:
+    """Return the enrolled akmods certificate identity, or fail before mutation."""
+
+    if not _secure_boot_enabled():
+        raise RemediationError("secure_boot_not_enabled", 65)
+    common_name = _certificate_common_name()
+    certificate_serial = _certificate_serial()
+    if not common_name or not certificate_serial:
+        raise RemediationError("signing_certificate_invalid", 65)
+    if not _mok_key_enrolled():
+        raise RemediationError("mok_not_enrolled", 65)
+    return SigningTrust(
+        common_name=common_name,
+        certificate_serial=certificate_serial,
+    )
+
+
+def _package_versions(package: str) -> tuple[str, ...]:
+    completed = run_command(
+        (RPM, "-q", "--qf", "%{VERSION}\\n", package),
+        timeout=10,
+        capture=True,
+    )
+    if completed.returncode != 0:
+        return ()
+    versions = tuple(line.strip() for line in completed.stdout.splitlines() if line.strip())
+    if not versions or any(not PACKAGE_VERSION.fullmatch(version) for version in versions):
+        raise RemediationError("package_state_invalid")
+    return versions
+
+
+def _module_field(kernel: str, field: str) -> str:
+    completed = run_command(
+        (MODINFO, "-k", kernel, "-F", field, "nvidia"),
+        timeout=10,
+        capture=True,
+    )
+    if completed.returncode != 0:
+        return ""
+    lines = completed.stdout.splitlines()
+    value = lines[0].strip() if lines else ""
+    if len(value) > 256 or any(character in value for character in "\x00\r\n"):
+        raise RemediationError("module_state_invalid")
+    return value
+
+
+def _loaded_module_version() -> str:
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(LOADED_MODULE_VERSION, flags)
+    except OSError:
+        return ""
+    try:
+        raw = os.read(descriptor, 258)
+    except OSError:
+        return ""
+    finally:
+        os.close(descriptor)
+    if len(raw) > 257:
+        raise RemediationError("module_state_invalid")
+    try:
+        value = raw.decode("ascii").strip()
+    except UnicodeDecodeError as exc:
+        raise RemediationError("module_state_invalid") from exc
+    if value and not PACKAGE_VERSION.fullmatch(value):
+        raise RemediationError("module_state_invalid")
+    return value
+
+
+def _nouveau_module_loaded() -> bool:
+    try:
+        NOUVEAU_MODULE.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def inspect_state(kernel: str, signing_trust: SigningTrust) -> dict[str, bool]:
+    target_ready = all(
+        versions and all(version.startswith("580.") for version in versions)
+        for versions in (_package_versions(package) for package in TARGET_PACKAGES)
+    )
+    conflicts = (*CONFLICTING_PACKAGES, f"kmod-nvidia-{kernel}")
+    conflict_versions = {
+        package: _package_versions(package) for package in conflicts
+    }
+    conflicts_absent = all(not versions for versions in conflict_versions.values())
+    module_version = _module_field(kernel, "version")
+    module_signer = _module_field(kernel, "signer")
+    module_sig_key = _module_field(kernel, "sig_key").upper()
+    loaded_module_version = _loaded_module_version()
+    return {
+        "legacy_subpackages_present": any(
+            conflict_versions[package] for package in REMOVED_PACKAGES
+        ),
+        "loaded_module_current": bool(module_version)
+        and loaded_module_version == module_version
+        and not _nouveau_module_loaded(),
+        "packages_ready": target_ready and conflicts_absent,
+        "module_ready": module_version.startswith("580."),
+        "module_signed": bool(module_signer),
+        "module_signer_matches": bool(module_signer)
+        and module_signer == signing_trust.common_name,
+        "module_sig_key_matches": bool(module_sig_key)
+        and module_sig_key == signing_trust.certificate_serial,
+    }
+
+
+def state_ready(state: dict[str, bool]) -> bool:
+    required = (
+        "packages_ready",
+        "module_ready",
+        "module_signer_matches",
+        "module_sig_key_matches",
+    )
+    return all(state.get(key) is True for key in required)
+
+
+def wait_for_ready(
+    kernel: str,
+    signing_trust: SigningTrust,
+    timeout_seconds: int,
+) -> dict[str, bool] | None:
+    """Poll through bounded akmods post-transaction races."""
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        state = inspect_state(kernel, signing_trust)
+        if state_ready(state):
+            return state
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        time.sleep(min(STATE_POLL_SECONDS, remaining))
+
+
+def ensure_580xx(kernel: str, signing_trust: SigningTrust) -> tuple[bool, dict[str, bool]]:
+    """Return mutation and final state; raise unless the disk state is ready."""
+
+    initial_state = inspect_state(kernel, signing_trust)
+    if state_ready(initial_state):
+        return False, initial_state
+
+    if initial_state["legacy_subpackages_present"]:
+        removal = run_command(DNF_REMOVE_TRANSACTION, timeout=COMMAND_TIMEOUT_SECONDS)
+        if removal.returncode != 0:
+            raise RemediationError("package_remove_failed")
+
+    installation = run_command(DNF_INSTALL_TRANSACTION, timeout=COMMAND_TIMEOUT_SECONDS)
+    if installation.returncode != 0:
+        raise RemediationError("package_install_failed")
+
+    ready_state = wait_for_ready(kernel, signing_trust, POST_INSTALL_WAIT_SECONDS)
+    if ready_state is not None:
+        return True, ready_state
+
+    build_succeeded = False
+    for attempt in range(AKMOD_ATTEMPTS):
+        build = run_command(
+            (
+                AKMODS,
+                "--force",
+                "--rebuild",
+                "--kernels",
+                kernel,
+                "--akmod",
+                "nvidia-580xx",
+            ),
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+        build_succeeded = build_succeeded or build.returncode == 0
+        ready_state = wait_for_ready(kernel, signing_trust, POST_BUILD_WAIT_SECONDS)
+        if ready_state is not None:
+            return True, ready_state
+        if attempt + 1 < AKMOD_ATTEMPTS:
+            time.sleep(AKMOD_RETRY_DELAY_SECONDS)
+
+    if build_succeeded:
+        raise RemediationError("postcondition_failed")
+    raise RemediationError("module_build_failed")
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or sys.argv[1] != OPERATION:
+        payload: dict[str, object] = {"error": "operation_not_allowed", "operation": OPERATION}
+        return 64 if emit(payload) else 1
+    if effective_uid() != 0:
+        payload = {"error": "root_required", "operation": OPERATION}
+        return 77 if emit(payload) else 1
+
+    try:
+        validate_platform()
+        validate_commands()
+        signing_trust = validate_secure_boot_trust()
+        kernel = os.uname().release
+        if not KERNEL_RELEASE.fullmatch(kernel):
+            raise RemediationError("kernel_release_invalid", 65)
+        changed, final_state = ensure_580xx(kernel, signing_trust)
+        if (
+            validate_secure_boot_trust() != signing_trust
+            or not final_state["module_signer_matches"]
+            or not final_state["module_sig_key_matches"]
+        ):
+            raise RemediationError("signing_trust_changed")
+        payload = {
+            "changed": changed,
+            "mok_enrolled": True,
+            "module_sig_key_matches": True,
+            "module_signer_matches": True,
+            "module_signed": True,
+            "operation": OPERATION,
+            "os": "fedora-44",
+            "packages_ready": True,
+            "pci_device": EXPECTED_PCI_ID,
+            "reboot_required": not final_state["loaded_module_current"],
+            "secure_boot_enabled": True,
+            "status": "ready",
+        }
+        return 0 if emit(payload) else 1
+    except RemediationError as exc:
+        payload = {"error": exc.code, "operation": OPERATION}
+        return exc.status if emit(payload) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

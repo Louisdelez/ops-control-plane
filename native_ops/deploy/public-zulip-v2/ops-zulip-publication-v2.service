@@ -1,0 +1,13 @@
+[Unit]
+Description=Approved fixed publication of zulip.example.org
+After=network-online.target
+OnFailure=ops-zulip-publication-v2-recover.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/ops-zulip-public-20260912-2/publish.py
+TimeoutStartSec=600
+TimeoutStopSec=600
+MemoryMax=256M
+TasksMax=64
+LimitCORE=0
+UMask=0077

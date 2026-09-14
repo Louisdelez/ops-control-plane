@@ -1,0 +1,8 @@
+# Supervised Codex receives one fixed MCP identity and no direct database access.
+# The final "" requires an empty command-line argument vector on supported sudo.
+Cmnd_Alias OPSBROKER_CODEX_MCP = /usr/local/libexec/ops-broker/ops-broker-mcp-codex ""
+
+Defaults!OPSBROKER_CODEX_MCP env_reset
+Defaults!OPSBROKER_CODEX_MCP env_delete += "BASH_ENV ENV CDPATH GLOBIGNORE SHELLOPTS BASHOPTS PYTHONPATH PYTHONHOME PYTHONINSPECT PYTHONSTARTUP"
+
+ops-user ALL=(opsbroker:opsbroker) NOPASSWD: OPSBROKER_CODEX_MCP

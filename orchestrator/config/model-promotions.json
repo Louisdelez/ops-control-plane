@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "automatic_promotion": false,
+  "promotions": {
+    "tiny": null,
+    "small": null,
+    "medium": null,
+    "max_local": null,
+    "embedding_cpu": null,
+    "reranker_cpu": null
+  }
+}

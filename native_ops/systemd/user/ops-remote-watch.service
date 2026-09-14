@@ -1,0 +1,13 @@
+[Unit]
+Description=Ops server services watch through fixed read-only broker runbooks
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ops-native/venv/bin/python /usr/local/libexec/ops-native/remote-watch.py
+TimeoutStartSec=300
+UMask=0077
+MemoryMax=200M
+CPUQuota=25%
+TasksMax=32
+Nice=10

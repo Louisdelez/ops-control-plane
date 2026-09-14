@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dell-ops.local/schemas/provider-integrations.v1.schema.json",
+  "title": "Dell Ops provider integration registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "revision", "verified_on", "finance_capability_names",
+    "finance_access_modes", "provider_accounts", "deployment_mappings"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "revision": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"},
+    "verified_on": {"type": "string", "format": "date"},
+    "finance_capability_names": {
+      "type": "array",
+      "prefixItems": [
+        {"const": "cash_balance"}, {"const": "plan_quota"},
+        {"const": "usage"}, {"const": "cost"},
+        {"const": "rate_limits"}, {"const": "spending_limit"}
+      ],
+      "items": false,
+      "minItems": 6,
+      "maxItems": 6
+    },
+    "finance_access_modes": {
+      "type": "array",
+      "prefixItems": [
+        {"const": "direct_api"}, {"const": "admin_api"},
+        {"const": "cloud_billing_api"}, {"const": "console_only"},
+        {"const": "not_applicable"}, {"const": "unknown"}
+      ],
+      "items": false,
+      "minItems": 6,
+      "maxItems": 6
+    },
+    "provider_accounts": {
+      "type": "array",
+      "minItems": 21,
+      "maxItems": 21,
+      "items": {"$ref": "#/$defs/providerAccount"}
+    },
+    "deployment_mappings": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {"$ref": "#/$defs/deploymentMapping"}
+    }
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$"},
+    "httpsTemplate": {
+      "type": ["string", "null"],
+      "maxLength": 512,
+      "pattern": "^https://"
+    },
+    "financialAccessMode": {
+      "enum": [
+        "direct_api", "admin_api", "cloud_billing_api", "console_only",
+        "not_applicable", "unknown"
+      ]
+    },
+    "financialCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cash_balance", "plan_quota", "usage", "cost", "rate_limits",
+        "spending_limit"
+      ],
+      "properties": {
+        "cash_balance": {"$ref": "#/$defs/financialAccessMode"},
+        "plan_quota": {"$ref": "#/$defs/financialAccessMode"},
+        "usage": {"$ref": "#/$defs/financialAccessMode"},
+        "cost": {"$ref": "#/$defs/financialAccessMode"},
+        "rate_limits": {"$ref": "#/$defs/financialAccessMode"},
+        "spending_limit": {"$ref": "#/$defs/financialAccessMode"}
+      }
+    },
+    "site": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "region", "base_url", "status"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "region": {"type": "string", "minLength": 1, "maxLength": 64},
+        "base_url": {"$ref": "#/$defs/httpsTemplate"},
+        "status": {"enum": ["documented", "template", "unverified"]}
+      }
+    },
+    "modelDiscovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "method", "endpoint", "operation", "credential_scope"],
+      "properties": {
+        "mode": {"enum": ["api", "control_plane_api", "static_documentation", "unverified"]},
+        "method": {"type": ["string", "null"], "enum": ["GET", "POST", null]},
+        "endpoint": {"$ref": "#/$defs/httpsTemplate"},
+        "operation": {"type": ["string", "null"], "maxLength": 128},
+        "credential_scope": {"enum": ["inference", "admin_finance", "none"]}
+      }
+    },
+    "credential": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["credential_ref", "auth_scheme", "header_name", "value_prefix"],
+      "properties": {
+        "credential_ref": {
+          "type": ["string", "null"],
+          "maxLength": 256,
+          "pattern": "^kv-infra-shared/data/llm(?:-admin)?/[a-z0-9/-]+$"
+        },
+        "auth_scheme": {
+          "enum": [
+            "none", "unknown", "bearer", "x_api_key", "x_api_key_and_version",
+            "google_api_key", "google_oauth2", "api_key_or_bearer",
+            "aws_sigv4", "aws_sigv4_or_bearer", "azure_api_key_or_entra",
+            "azure_entra", "alibaba_rpc_signature", "tencent_tc3_hmac",
+            "volcengine_hmac"
+          ]
+        },
+        "header_name": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
+        "value_prefix": {"type": ["string", "null"], "maxLength": 32}
+      }
+    },
+    "credentials": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inference", "admin_finance"],
+      "properties": {
+        "inference": {"$ref": "#/$defs/credential"},
+        "admin_finance": {"$ref": "#/$defs/credential"}
+      }
+    },
+    "inference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocols", "sites", "model_discovery"],
+      "properties": {
+        "protocols": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "openai_native", "openai_compatible", "openai_chat_partial",
+              "dashscope_native", "anthropic_compatible", "anthropic_messages",
+              "gemini_native", "cohere_v2", "bedrock_native",
+              "preview_openai_compatible"
+            ]
+          }
+        },
+        "sites": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/site"}
+        },
+        "model_discovery": {"$ref": "#/$defs/modelDiscovery"}
+      }
+    },
+    "financeEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capabilities", "access", "method", "endpoint", "operation",
+        "credential_scope"
+      ],
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {"enum": ["cash_balance", "plan_quota", "usage", "cost", "rate_limits", "spending_limit"]}
+        },
+        "access": {"enum": ["direct_api", "admin_api", "cloud_billing_api"]},
+        "method": {"enum": ["GET", "POST"]},
+        "endpoint": {"type": "string", "pattern": "^https://", "maxLength": 512},
+        "operation": {"type": ["string", "null"], "maxLength": 160},
+        "credential_scope": {"enum": ["inference", "admin_finance"]}
+      }
+    },
+    "officialSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "url", "verified_on"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 160},
+        "url": {"type": "string", "format": "uri", "pattern": "^https://", "maxLength": 1024},
+        "verified_on": {"type": "string", "format": "date"}
+      }
+    },
+    "providerAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "display_name", "inference", "credentials",
+        "financial_capabilities", "finance_endpoints", "official_sources",
+        "limitations"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "display_name": {"type": "string", "minLength": 1, "maxLength": 160},
+        "inference": {"$ref": "#/$defs/inference"},
+        "credentials": {"$ref": "#/$defs/credentials"},
+        "financial_capabilities": {"$ref": "#/$defs/financialCapabilities"},
+        "finance_endpoints": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/financeEndpoint"}},
+        "official_sources": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"$ref": "#/$defs/officialSource"}},
+        "limitations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      }
+    },
+    "deploymentMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deployment_id", "card_id", "developer_id",
+        "inference_provider_account_id", "exact_model_id",
+        "activation_state", "source"
+      ],
+      "properties": {
+        "deployment_id": {"$ref": "#/$defs/identifier"},
+        "card_id": {"$ref": "#/$defs/identifier"},
+        "developer_id": {"$ref": "#/$defs/identifier"},
+        "inference_provider_account_id": {"$ref": "#/$defs/identifier"},
+        "exact_model_id": {"type": "string", "minLength": 1, "maxLength": 200},
+        "activation_state": {"enum": ["configured_not_network_verified", "canary_verified", "disabled"]},
+        "source": {"enum": ["local_orchestrator_configuration"]}
+      }
+    }
+  }
+}

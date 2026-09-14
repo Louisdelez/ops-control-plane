@@ -1,0 +1,3 @@
+# Only a separately approved broker Class C action activates a destination.
+Cmnd_Alias OPS_PERIODIC_RECOVERY = /usr/local/libexec/ops-runbooks/periodic-recovery-enable nas, /usr/local/libexec/ops-runbooks/periodic-recovery-enable edge-vps
+opsbroker ALL=(root) NOPASSWD: OPS_PERIODIC_RECOVERY

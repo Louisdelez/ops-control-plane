@@ -1,0 +1,20 @@
+id: shared.change-request.v1
+version: 1
+project: infra-shared
+action_class: C
+description: Enregistrer une demande de changement partage ; aucune commande automatique
+timeout_seconds: 5
+command: null
+parameters:
+  summary:
+    type: string
+    max_length: 240
+  impact:
+    type: string
+    max_length: 1000
+  rollback:
+    type: string
+    max_length: 1000
+output:
+  max_bytes: 8192
+  redact: true

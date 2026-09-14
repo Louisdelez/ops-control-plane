@@ -1,0 +1,16 @@
+[Unit]
+Description=Group-restricted local approval socket for ops-broker
+Before=ops-broker.service
+
+[Socket]
+ListenStream=/run/ops-broker/api.sock
+SocketUser=opsbroker
+SocketGroup=opsbroker-api
+SocketMode=0660
+DirectoryMode=0770
+RemoveOnStop=yes
+Accept=no
+Service=ops-broker.service
+
+[Install]
+WantedBy=sockets.target

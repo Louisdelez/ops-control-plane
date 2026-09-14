@@ -1,0 +1,38 @@
+[Unit]
+Description=Publish failed OpenBao Raft backup metrics
+
+[Service]
+Type=oneshot
+User=root
+Group=node-exporter
+ExecStart=/usr/local/libexec/openbao-raft-backup/openbao-backup-metric failure
+UMask=0027
+NoNewPrivileges=yes
+# A failure update preserves the last verified values.  Keep the two units
+# identical so a manual success/failure swap cannot change their privilege
+# boundary.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+ReadOnlyPaths=/var/backups/openbao
+ReadWritePaths=/var/lib/node-exporter/textfile
+InaccessiblePaths=-/etc/credstore.encrypted -/etc/openbao.d -/var/lib/openbao -/var/lib/ops-broker -/var/lib/ops-memory -/run/credentials -/run/openbao
+TimeoutStartSec=30

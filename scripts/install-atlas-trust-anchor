@@ -1,0 +1,1730 @@
+#!/usr/bin/python3 -I
+"""Publish the reviewed Atlas release as a root-owned, versioned trust anchor.
+
+This is the physical TOFU enrollment and three pinned corrective reconciliation
+steps.  It never accepts credentials, does not publish a bootstrap marker, and
+does not start or alter any service.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import stat
+import sys
+from typing import Any
+
+
+RELEASE_ID = "atlas-api-zulip-2026.09.09.29"
+REVIEWED_LAUNCHER_SHA256 = "0975899d89952ceca5d921af36358175f26b0ca9719770025da1398081af48bf"
+ANCHOR_PARENT = Path("/usr/local/lib/ops-control-plane")
+ANCHOR_ROOT = ANCHOR_PARENT / "atlas-api-zulip-2026.09.08.11"  # Existing signed-off GUI ABI
+STAGING_ROOT = ANCHOR_PARENT / f".{RELEASE_ID}.staging"
+HISTORY_PARENT = ANCHOR_PARENT / "history"
+HISTORY_ANCHOR = HISTORY_PARENT / f"{RELEASE_ID}.pre-reconciliation"
+LOCK_PATH = Path("/run/lock/atlas-trust-anchor.lock")
+MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+MAX_HELPER_BYTES = 4 * 1024 * 1024
+MAX_LAUNCHER_BYTES = 512 * 1024
+MAX_AUTHORITY_BYTES = 256 * 1024
+MAX_INSTALLER_BYTES = 512 * 1024
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+ROOT_UID = 0
+ROOT_GID = 0
+ANCHOR_FILES = {
+    "release-manifest.v1.json": 0o444,
+    "control-plane-bootstrap": 0o555,
+    "launch-atlas-reviewed-rpm": 0o555,
+}
+LEGACY_SHA256 = {
+    "release-manifest.v1.json": "7c2f67acfc761b37bd2e7b057ed8180b4e6450f099b2234437fa0ac0e301a5c9",
+    "control-plane-bootstrap": "52ed225f8260aa99b4c9e1a26c98bd1d817048e8cdc9ca18fe7d9ae4effc2a71",
+    "launch-atlas-reviewed-rpm": "3c2bf03dfc18b7141edc7c1841dd633267d4bf1808eaf72c1211fe6862bb6b72",
+}
+INTERMEDIATE_SHA256 = {
+    "release-manifest.v1.json": "e9917958ebc4b80901efcfa5c28defb3d747bc138a428e03eb0e18286a5dc982",
+    "control-plane-bootstrap": "10319e7988fa8fe3698b92a32739aeded3d341db1df1d43b474a14f8d8f3833c",
+    "launch-atlas-reviewed-rpm": "3c2bf03dfc18b7141edc7c1841dd633267d4bf1808eaf72c1211fe6862bb6b72",
+}
+PRE_THIRD_SHA256 = {
+    "release-manifest.v1.json": "af3ba2ca25e6f9f8c182314f85853cecff727cf14c1e70dfca1060e8849d7faf",
+    "control-plane-bootstrap": "6a12ae7aa8f16d208cabd79f268406db0bbdd235da4c884547a1170dcde98a8b",
+    "launch-atlas-reviewed-rpm": "3c2bf03dfc18b7141edc7c1841dd633267d4bf1808eaf72c1211fe6862bb6b72",
+}
+ANCHOR_MAXIMUMS = {
+    "release-manifest.v1.json": MAX_MANIFEST_BYTES,
+    "control-plane-bootstrap": MAX_HELPER_BYTES,
+    "launch-atlas-reviewed-rpm": MAX_LAUNCHER_BYTES,
+}
+MANIFEST_KEYS = {
+    "schema_version",
+    "release_id",
+    "architecture",
+    "trust_anchor",
+    "bootstrap",
+    "supply_chain",
+    "host",
+    "cutover",
+    "source",
+    "artifacts",
+    "components",
+    "runtime",
+    "rollback",
+}
+BOOTSTRAP_KEYS = {
+    "mode",
+    "actor",
+    "helper_sha256",
+    "allowed_when",
+    "consumed_marker",
+    "state_root",
+    "approver_state",
+    "recovery_units",
+    "requires_provider_keys",
+    "rollback_keeps_recovered_userpass",
+    "gui_protocol",
+    "openbao",
+    "corrective",
+}
+GUI_PROTOCOL_KEYS = {
+    "schema_version",
+    "public_operations",
+    "apply_magic",
+    "control_magic",
+    "stdout",
+    "atlas_ancestry_required",
+    "launcher_mode",
+    "atlas_payload_member",
+    "atlas_payload_sha256",
+    "anonymous_pipes_required",
+    "mutation_boundary_event",
+    "secrets_outside_process_memory",
+}
+OPENBAO_KEYS = {
+    "version",
+    "address",
+    "listener_config",
+    "listener_source_sha256",
+    "recovery_credentials",
+    "tcp_legacy_endpoint_disabled",
+    "temporary_unix_socket",
+    "temporary_unix_listener_sha256",
+    "root_token_escrow",
+    "undo_escrow",
+    "userpass_password_escrow",
+    "exclusive_local_maintenance",
+    "root_generation_max_remints",
+    "root_generation_window_seconds",
+}
+CORRECTIVE_KEYS = {
+    "mode",
+    "max_attempts",
+    "consumed_marker",
+    "state_root",
+    "history_root",
+    "recovery_helper",
+    "recovery_unit",
+    "recovery_path_unit",
+    "authority_document",
+    "recovery_from_release_id",
+    "recovery_from_source_tree_sha256",
+    "recovery_from_atlas_rpm_sha256",
+    "recovery_from_bootstrap_helper_sha256",
+    "recovery_from_manifest_sha256",
+}
+AUTHORITY_BYTES = b"""## Single corrective local bootstrap exception
+
+  The workstation owner authorizes codex-supervised to execute exactly one corrective local bootstrap transaction from the
+  cryptographically verified, terminal rolled-back release atlas-api-zulip-2026.09.08.10 to the reviewed release
+  atlas-api-zulip-2026.09.08.11, solely because Zulip was not installed before the first transaction failed.
+
+  The corrective transaction may archive, but never delete or rewrite, the exact prior consumed marker and state under the reviewed
+  root-owned history path. It requires physical local Polkit authentication and explicit Atlas confirmation, preserves a durable WAL
+  and audit chain, and performs automatic crash recovery and rollback. It may install only the scope authorized by the original local
+  bootstrap exception and may not contact remote providers or disclose secrets.
+
+  Before that marker is published, codex-supervised may install and reconcile only the reviewed root-owned versioned Atlas trust anchor
+  (release manifest, bootstrap helper, and sealed-RPM launcher), the corrective recovery helper, and its systemd units. This scaffold
+  is inert while the corrective marker is absent; an interrupted partial scaffold may only be reconciled to the exact reviewed bytes
+  and enablement, and it grants no authority to mutate any service or bootstrap state.
+
+  This corrective capability is consumed when its first persistent transaction marker is published, whether it succeeds or rolls
+  back. Resuming that same recorded transaction after interruption is authorized; no second corrective transaction is authorized.
+  Every later Class C action requires a separately recorded Zulip approval.
+"""
+
+
+class EnrollmentError(RuntimeError):
+    """Fail-closed enrollment error."""
+
+
+def _duplicate_safe_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise EnrollmentError("Le manifeste contient une clé dupliquée.")
+        value[key] = item
+    return value
+
+
+def _read_exact(
+    path: Path,
+    maximum: int,
+    *,
+    owner_uid: int,
+    owner_gid: int,
+    mode: int,
+) -> bytes:
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise EnrollmentError(f"Fichier indisponible : {path}") from exc
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != owner_uid
+            or before.st_gid != owner_gid
+            or stat.S_IMODE(before.st_mode) != mode
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > maximum
+        ):
+            raise EnrollmentError(f"Fichier non sûr : {path}")
+        chunks: list[bytes] = []
+        observed = 0
+        while observed <= maximum:
+            chunk = os.read(descriptor, min(1024 * 1024, maximum + 1 - observed))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            observed += len(chunk)
+        after = os.fstat(descriptor)
+        if (
+            observed != before.st_size
+            or after.st_dev != before.st_dev
+            or after.st_ino != before.st_ino
+            or after.st_size != before.st_size
+            or after.st_mtime_ns != before.st_mtime_ns
+            or after.st_ctime_ns != before.st_ctime_ns
+            or after.st_uid != owner_uid
+            or after.st_gid != owner_gid
+            or stat.S_IMODE(after.st_mode) != mode
+            or after.st_nlink != 1
+        ):
+            raise EnrollmentError(f"Fichier modifié pendant sa lecture : {path}")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _read_sealed_snapshot(
+    parent_pid: int,
+    descriptor_number: int,
+    maximum: int,
+    *,
+    owner_uid: int,
+    owner_gid: int,
+) -> bytes:
+    path = Path(f"/proc/{parent_pid}/fd/{descriptor_number}")
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+    except OSError as exc:
+        raise EnrollmentError("Un snapshot scellé est indisponible.") from exc
+    try:
+        before = os.fstat(descriptor)
+        required_seals = (
+            fcntl.F_SEAL_WRITE
+            | fcntl.F_SEAL_GROW
+            | fcntl.F_SEAL_SHRINK
+            | fcntl.F_SEAL_SEAL
+        )
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != owner_uid
+            or before.st_gid != owner_gid
+            or stat.S_IMODE(before.st_mode) != 0o400
+            or before.st_nlink != 0
+            or before.st_size <= 0
+            or before.st_size > maximum
+            or fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) != required_seals
+        ):
+            raise EnrollmentError("Un snapshot n'est pas intégralement scellé.")
+        chunks: list[bytes] = []
+        observed = 0
+        while observed <= maximum:
+            chunk = os.read(descriptor, min(1024 * 1024, maximum + 1 - observed))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            observed += len(chunk)
+        after = os.fstat(descriptor)
+        if (
+            observed != before.st_size
+            or after.st_dev != before.st_dev
+            or after.st_ino != before.st_ino
+            or after.st_size != before.st_size
+            or after.st_uid != owner_uid
+            or after.st_gid != owner_gid
+            or stat.S_IMODE(after.st_mode) != 0o400
+            or after.st_nlink != 0
+            or fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) != required_seals
+        ):
+            raise EnrollmentError("Un snapshot scellé a changé.")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _require_root_directory(path: Path, mode: int, *, create: bool = False) -> None:
+    if create and not os.path.lexists(path):
+        try:
+            os.mkdir(path, mode)
+            os.chown(path, ROOT_UID, ROOT_GID)
+            os.chmod(path, mode)
+            _fsync_directory(path)
+            _fsync_directory(path.parent)
+        except FileExistsError:
+            pass
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise EnrollmentError(f"Répertoire root indisponible : {path}") from exc
+    if (
+        create
+        and stat.S_ISDIR(metadata.st_mode)
+        and metadata.st_uid == ROOT_UID
+        and metadata.st_gid == ROOT_GID
+        and stat.S_IMODE(metadata.st_mode) in {0o000, 0o700}
+        and mode == 0o755
+    ):
+        interrupted_mode = stat.S_IMODE(metadata.st_mode)
+        if interrupted_mode == 0o000:
+            # Crash frontier after mkdir under an unexpectedly restrictive
+            # inherited umask.  Only an empty, root-owned directory can be
+            # normalized; a foreign payload remains fail-closed.
+            os.chmod(path, 0o700)
+        if any(os.scandir(path)):
+            if interrupted_mode == 0o000:
+                os.chmod(path, interrupted_mode)
+            raise EnrollmentError(f"Répertoire root interrompu non vide : {path}")
+        os.chmod(path, mode)
+        _fsync_directory(path)
+        _fsync_directory(path.parent)
+        metadata = path.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != ROOT_UID
+        or metadata.st_gid != ROOT_GID
+        or stat.S_IMODE(metadata.st_mode) != mode
+    ):
+        raise EnrollmentError(f"Répertoire root non sûr : {path}")
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _exact_mapping(value: Any, keys: set[str], location: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != keys:
+        raise EnrollmentError(f"Les champs du manifeste diffèrent : {location}")
+    return value
+
+
+def _sha256_value(value: Any, location: str) -> str:
+    if not isinstance(value, str) or SHA256_RE.fullmatch(value) is None:
+        raise EnrollmentError(f"Empreinte SHA-256 invalide : {location}")
+    return value
+
+
+def _string_list(
+    value: Any, location: str, *, minimum: int = 1
+) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or len(value) < minimum
+        or any(not isinstance(item, str) or not item for item in value)
+        or len(set(value)) != len(value)
+    ):
+        raise EnrollmentError(f"Liste invalide dans le manifeste : {location}")
+    return value
+
+
+def _validate_python_program(raw: bytes, label: str, markers: tuple[bytes, ...]) -> None:
+    if not raw.startswith(b"#!/usr/bin/python3 -I\n") or b"\x00" in raw:
+        raise EnrollmentError(f"Le programme {label} n'a pas l'interpréteur revu.")
+    if any(marker not in raw for marker in markers):
+        raise EnrollmentError(f"Le programme {label} n'expose pas son contrat revu.")
+    try:
+        source = raw.decode("utf-8")
+        compile(source, f"<atlas-{label}>", "exec", dont_inherit=True, optimize=2)
+    except (SyntaxError, UnicodeDecodeError, ValueError) as exc:
+        raise EnrollmentError(f"Le programme {label} n'est pas exécutable.") from exc
+
+
+def _validate_manifest_structure(document: dict[str, Any]) -> None:
+    _exact_mapping(document, MANIFEST_KEYS, "racine")
+    if (
+        document["schema_version"] != 1
+        or document["release_id"] != RELEASE_ID
+        or document["architecture"] != "x86_64"
+    ):
+        raise EnrollmentError("L'identité de release du manifeste diffère.")
+
+    bootstrap = _exact_mapping(document["bootstrap"], BOOTSTRAP_KEYS, "bootstrap")
+    fixed_bootstrap = {
+        "mode": "one-shot-local-physical",
+        "actor": "codex-supervised",
+        "allowed_when": "zulip-absent",
+        "consumed_marker": "/var/lib/ops-control-plane-bootstrap.consumed.json",
+        "state_root": "/var/lib/ops-control-plane-bootstrap",
+        "approver_state": "/var/lib/ops-control-plane-bootstrap/zulip-approver.json",
+        "requires_provider_keys": False,
+        "rollback_keeps_recovered_userpass": True,
+    }
+    if any(bootstrap[key] != value for key, value in fixed_bootstrap.items()):
+        raise EnrollmentError("Le contrat bootstrap fixe diffère.")
+    if bootstrap["recovery_units"] != [
+        "ops-control-plane-bootstrap-guard.service",
+        "ops-control-plane-bootstrap-recovery.service",
+        "ops-control-plane-bootstrap-recovery-activate.service",
+    ]:
+        raise EnrollmentError("Les unités de récupération bootstrap diffèrent.")
+    _sha256_value(bootstrap["helper_sha256"], "bootstrap.helper_sha256")
+
+    gui = _exact_mapping(
+        bootstrap["gui_protocol"], GUI_PROTOCOL_KEYS, "bootstrap.gui_protocol"
+    )
+    fixed_gui = {
+        "schema_version": 1,
+        "public_operations": [
+            "gui-preflight",
+            "gui-apply",
+            "gui-corrective-preflight",
+            "gui-corrective-apply",
+            "gui-recovery-preflight",
+            "gui-recovery-apply",
+        ],
+        "apply_magic": "ATLASBOOT1",
+        "control_magic": "ATLASCTL1",
+        "stdout": "bounded-jsonl",
+        "atlas_ancestry_required": True,
+        "launcher_mode": "sealed-rpm-payload-memfd",
+        "atlas_payload_member": "/usr/bin/ops-model-manager",
+        "anonymous_pipes_required": True,
+        "mutation_boundary_event": "mutation-started",
+        "secrets_outside_process_memory": False,
+    }
+    if any(gui[key] != value for key, value in fixed_gui.items()):
+        raise EnrollmentError("Le protocole GUI bootstrap diffère.")
+    _sha256_value(gui["atlas_payload_sha256"], "bootstrap.gui_protocol.atlas_payload_sha256")
+
+    openbao = _exact_mapping(bootstrap["openbao"], OPENBAO_KEYS, "bootstrap.openbao")
+    fixed_openbao = {
+        "version": "2.6.2",
+        "address": "https://127.0.0.1:8200",
+        "listener_config": "/etc/openbao.d/openbao.hcl",
+        "recovery_credentials": ["openbao-unseal-share-1", "openbao-unseal-share-2"],
+        "tcp_legacy_endpoint_disabled": True,
+        "temporary_unix_socket": "/var/lib/openbao/ops-control-plane-bootstrap.sock",
+        "root_token_escrow": "/var/lib/ops-control-plane-bootstrap/root-token.cred",
+        "undo_escrow": "/var/lib/ops-control-plane-bootstrap/openbao-undo.cred",
+        "userpass_password_escrow": "/var/lib/ops-control-plane-bootstrap/userpass-password.cred",
+        "exclusive_local_maintenance": True,
+        "root_generation_max_remints": 1,
+        "root_generation_window_seconds": 10,
+    }
+    if any(openbao[key] != value for key, value in fixed_openbao.items()):
+        raise EnrollmentError("Le contrat OpenBao bootstrap diffère.")
+    if (
+        openbao["listener_source_sha256"]
+        != "fa35302f0917bfe0cb0a71e5926e0832b59a468cba2d0ceb967a93e3067fe034"
+        or openbao["temporary_unix_listener_sha256"]
+        != "bb5d13d1ce055fce8855a06cf750ab5515392c926cc7e289a3053cff147060d1"
+    ):
+        raise EnrollmentError("Les identités de configuration OpenBao diffèrent.")
+
+    corrective = _exact_mapping(
+        bootstrap["corrective"], CORRECTIVE_KEYS, "bootstrap.corrective"
+    )
+    fixed_corrective = {
+        "mode": "single-terminal-rollback-repair",
+        "max_attempts": 1,
+        "consumed_marker": "/var/lib/ops-control-plane-bootstrap-corrective.consumed.json",
+        "state_root": "/var/lib/ops-control-plane-bootstrap-corrective",
+        "history_root": "/var/lib/ops-control-plane-bootstrap-history",
+        "recovery_helper": "/usr/local/libexec/ops-control-plane-bootstrap-corrective",
+        "recovery_unit": "ops-control-plane-bootstrap-corrective-recovery.service",
+        "recovery_path_unit": "ops-control-plane-bootstrap-corrective-recovery.path",
+        "authority_document": "AGENTS.md",
+        "recovery_from_release_id": "atlas-api-zulip-2026.09.08.10",
+    }
+    if any(corrective[key] != value for key, value in fixed_corrective.items()):
+        raise EnrollmentError("Le contrat correctif bootstrap diffère.")
+    if {
+        key: corrective[key]
+        for key in (
+            "recovery_from_source_tree_sha256",
+            "recovery_from_atlas_rpm_sha256",
+            "recovery_from_bootstrap_helper_sha256",
+            "recovery_from_manifest_sha256",
+        )
+    } != {
+        "recovery_from_source_tree_sha256": "3ede12c444991f12c81359963cfde50bc01d757fba8bf512a56f610a095f40ef",
+        "recovery_from_atlas_rpm_sha256": "a571034b4902e951d8af2754eb904be6fe68d0a582f006d34a6b694f77cad32f",
+        "recovery_from_bootstrap_helper_sha256": "93561352ce9684ce2eb3a1cc8a9abb13375d31073c5b6a515b716cb2e1c3a9d0",
+        "recovery_from_manifest_sha256": "96f137109ea240264f53e994e4e0179c9dbb90db485c595cd34bbf6a692214d2",
+    }:
+        raise EnrollmentError("Les identités de récupération corrective diffèrent.")
+
+    source = _exact_mapping(
+        document["source"], {"root", "roots", "tree_algorithm", "tree_sha256"}, "source"
+    )
+    if source["root"] != "/home/ops-user/ops-control-plane" or source["tree_algorithm"] != "sha256-tree-v1":
+        raise EnrollmentError("Le contrat de source diffère.")
+    roots = _string_list(source["roots"], "source.roots", minimum=10)
+    expected_roots = [
+        "AGENTS.md",
+        "README.md",
+        "apps/model-manager",
+        "bridges/zulip",
+        "broker",
+        "broker/config/executables.yaml",
+        "broker/config/rbac.yaml",
+        "broker/deploy/helpers/control-plane-deployment",
+        "broker/deploy/sudoers/ops-broker-control-plane-deployment",
+        "broker/requirements-mcp.txt",
+        "catalog",
+        "config/hermes",
+        "config/ollama/selection.json",
+    "config/openbao",
+        "deploy/control-plane/README.md",
+        "deploy/control-plane/bin/control-plane-bootstrap",
+        "deploy/control-plane/bin/control-plane-deployment-worker",
+        "deploy/control-plane/ops-control-plane-deployment.tmpfiles",
+        "deploy/control-plane/release-manifest.v1.schema.json",
+        "deploy/control-plane/systemd",
+        "deploy/zulip-local",
+        "docs",
+        "memory/config/memory.toml",
+    "memory/deploy",
+    "memory/src/ops_memory/mcp_server.py",
+        "orchestrator",
+        "policies",
+        "provider-discovery",
+        "runbooks",
+        "runbooks/local/control-plane-deployment-status.yaml",
+        "scripts",
+        "systemd",
+    ]
+    if roots != expected_roots or any(
+        item.startswith("/") or ".." in Path(item).parts for item in roots
+    ):
+        raise EnrollmentError("La couverture de source est invalide.")
+    _sha256_value(source["tree_sha256"], "source.tree_sha256")
+
+    artifacts = _exact_mapping(
+        document["artifacts"], {"atlas_rpm", "hermes_source_archive"}, "artifacts"
+    )
+    atlas = _exact_mapping(
+        artifacts["atlas_rpm"],
+        {
+            "source_path",
+            "sha256",
+            "payload_executable_path",
+            "payload_executable_sha256",
+            "name",
+            "initial_state",
+            "signed",
+            "version",
+            "release",
+            "architecture",
+        },
+        "artifacts.atlas_rpm",
+    )
+    if (
+        atlas["source_path"] != "/home/ops-user/Téléchargements/Atlas-modeles-IA-0.1.0-1.x86_64.rpm"
+        or atlas["payload_executable_path"] != "/usr/bin/ops-model-manager"
+        or atlas["name"] != "modeles-ia"
+        or atlas["initial_state"] != "absent"
+        or atlas["signed"] is not False
+        or atlas["version"] != "0.1.0"
+        or atlas["release"] != "1"
+        or atlas["architecture"] != "x86_64"
+    ):
+        raise EnrollmentError("Le contrat de l'artefact Atlas diffère.")
+    _sha256_value(atlas["sha256"], "artifacts.atlas_rpm.sha256")
+    atlas_payload_sha256 = _sha256_value(
+        atlas["payload_executable_sha256"],
+        "artifacts.atlas_rpm.payload_executable_sha256",
+    )
+    if atlas_payload_sha256 != gui["atlas_payload_sha256"]:
+        raise EnrollmentError("L'identité du binaire Atlas diffère entre les contrats.")
+
+    hermes_archive = _exact_mapping(
+        artifacts["hermes_source_archive"],
+        {
+            "source_path",
+            "sha256",
+            "format",
+            "commit",
+            "git_tree_oid",
+            "canonical_tree_sha256",
+            "top_level_directory",
+            "compressed_size",
+            "expanded_size",
+            "members",
+            "regular_files",
+            "directories",
+            "max_file_size",
+        },
+        "artifacts.hermes_source_archive",
+    )
+    expected_hermes_archive = {
+        "source_path": "/home/ops-user/Téléchargements/Hermes-agent-v2026.8.31-29112bef.tar.gz",
+        "sha256": "76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a",
+        "format": "github-codeload-tar-gzip-v1",
+        "commit": "29112bef099274229cadff79cdff7bf7b99c4b77",
+        "git_tree_oid": "daaffc303ae437041b7f76be17c5f61b14f2ce99",
+        "canonical_tree_sha256": "7ecc4e3f45d65d6ab33907f9220c06daa66b118af2a0fbbf5df3f2e019776ad1",
+        "top_level_directory": "hermes-agent-29112bef099274229cadff79cdff7bf7b99c4b77",
+        "compressed_size": 69442866,
+        "expanded_size": 167028103,
+        "members": 11994,
+        "regular_files": 10925,
+        "directories": 1069,
+        "max_file_size": 3871968,
+    }
+    if hermes_archive != expected_hermes_archive:
+        raise EnrollmentError("Le contrat d'archive Hermes diffère.")
+    if not isinstance(hermes_archive["commit"], str) or re.fullmatch(
+        r"[0-9a-f]{40}", hermes_archive["commit"]
+    ) is None:
+        raise EnrollmentError("Le commit Hermes est invalide.")
+    if not isinstance(hermes_archive["git_tree_oid"], str) or re.fullmatch(
+        r"[0-9a-f]{40}", hermes_archive["git_tree_oid"]
+    ) is None:
+        raise EnrollmentError("L'arbre Git Hermes est invalide.")
+    _sha256_value(hermes_archive["sha256"], "artifacts.hermes_source_archive.sha256")
+    _sha256_value(
+        hermes_archive["canonical_tree_sha256"],
+        "artifacts.hermes_source_archive.canonical_tree_sha256",
+    )
+    for key in (
+        "compressed_size",
+        "expanded_size",
+        "members",
+        "regular_files",
+        "directories",
+        "max_file_size",
+    ):
+        if type(hermes_archive[key]) is not int or hermes_archive[key] <= 0:
+            raise EnrollmentError(f"La borne Hermes est invalide : {key}")
+    if (
+        hermes_archive["regular_files"] + hermes_archive["directories"]
+        != hermes_archive["members"]
+        or hermes_archive["compressed_size"] >= hermes_archive["expanded_size"]
+        or hermes_archive["max_file_size"] > hermes_archive["expanded_size"]
+    ):
+        raise EnrollmentError("Les bornes de l'archive Hermes sont incohérentes.")
+
+    components = _exact_mapping(
+        document["components"],
+        {
+            "atlas",
+            "orchestrator",
+            "hermes",
+            "zulip_bridge",
+            "zulip",
+            "model_catalogue",
+            "provider_integrations",
+        },
+        "components",
+    )
+    hermes_component = _exact_mapping(
+        components["hermes"], {"version", "tag", "commit"}, "components.hermes"
+    )
+    if (
+        hermes_component["commit"] != hermes_archive["commit"]
+        or hermes_component["tag"] != "v2026.8.31"
+        or hermes_component["version"] != "0.21.0"
+    ):
+        raise EnrollmentError("Les identités Hermes diffèrent.")
+    expected_simple_components = {
+        "atlas": {"version": atlas["version"], "mode": "desktop-local"},
+        "orchestrator": {"version": "0.2.0", "mode": "api-first"},
+        "zulip_bridge": {"version": "0.3.0", "mode": "local-only"},
+    }
+    for name, expected_component in expected_simple_components.items():
+        component = _exact_mapping(
+            components[name], {"version", "mode"}, f"components.{name}"
+        )
+        if component != expected_component:
+            raise EnrollmentError(f"Le contrat du composant diffère : {name}")
+    zulip = _exact_mapping(
+        components["zulip"], {"version", "origin", "images"}, "components.zulip"
+    )
+    if zulip["version"] != "12.2-0" or zulip["origin"] != "https://zulip.ops.local:8443":
+        raise EnrollmentError("Le contrat Zulip diffère.")
+    images = _exact_mapping(
+        zulip["images"], {"zulip", "postgresql", "memcached", "rabbitmq", "redis"},
+        "components.zulip.images",
+    )
+    if images != {
+        "zulip": "765f0ab3caa49041989132ee1879d98dbab1df7695c27e713eac1f114d167755",
+        "postgresql": "e71ba8616fa42cdc1b248f51263d9290c29681cb8c1992eb9b498af0bb656b29",
+        "memcached": "c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7",
+        "rabbitmq": "15e7b5e60af2d2147f8d74eef5b93c29501cd644361ca93bc854e409c2dde624",
+        "redis": "becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576",
+    }:
+        raise EnrollmentError("Les identités d'images Zulip diffèrent.")
+    catalogue = _exact_mapping(
+        components["model_catalogue"],
+        {"schema_version", "revision", "sha256", "cards", "provider_accounts", "runtime"},
+        "components.model_catalogue",
+    )
+    provider_integrations = _exact_mapping(
+        components["provider_integrations"],
+        {"schema_version", "revision", "sha256", "provider_accounts"},
+        "components.provider_integrations",
+    )
+    catalogue_runtime = _exact_mapping(
+        catalogue["runtime"],
+        {
+            "static_cards",
+            "static_deployments",
+            "dynamic_cards",
+            "invocable_cards",
+            "blocked_cards",
+            "provider_deployments",
+            "provider_inventory_sha256",
+            "blocked_reasons",
+        },
+        "components.model_catalogue.runtime",
+    )
+    if catalogue_runtime != {
+        "static_cards": 5,
+        "static_deployments": 7,
+        "dynamic_cards": 9,
+        "invocable_cards": 14,
+        "blocked_cards": 44,
+        "provider_deployments": 19,
+        "provider_inventory_sha256": "0679d0cda70e8ed0f3705cba7c4ca2d9ccce8ce016b0bef2aec4c95a89a45f7b",
+        "blocked_reasons": {
+            "token_prices_not_officially_verified": 28,
+            "quarantined": 11,
+            "exact_model_id_unverified": 4,
+            "minimax_m3_chat_api_contract_unverified": 1,
+        },
+    }:
+        raise EnrollmentError("Le contrat runtime du catalogue diffère.")
+    if catalogue != {
+        "schema_version": 2,
+        "revision": "catalogue-api-ia-2026-09-05.3",
+        "sha256": "7011ba973302016dd29bf2c77af9f6155e1086452c412b058d8fc61091e87a58",
+        "cards": 58,
+        "provider_accounts": 21,
+        "runtime": catalogue_runtime,
+    } or provider_integrations != {
+        "schema_version": 1,
+        "revision": "provider-integrations-2026-09-05.1",
+        "sha256": "9b524fb3736b459ac7ccd831ae6a31d870116951251f718626f21ef2a412928f",
+        "provider_accounts": 21,
+    }:
+        raise EnrollmentError("Le contrat catalogue/fournisseurs diffère.")
+
+    supply = _exact_mapping(
+        document["supply_chain"],
+        {
+            "network_required",
+            "byte_for_byte_reproducible",
+            "python_binary_only",
+            "python_no_deps",
+            "python_artifact_hashes_present",
+            "python_closures",
+            "atlas",
+            "hermes",
+        },
+        "supply_chain",
+    )
+    if (
+        supply["network_required"] is not True
+        or supply["byte_for_byte_reproducible"] is not False
+        or supply["python_binary_only"] is not True
+        or supply["python_no_deps"] is not True
+        or supply["python_artifact_hashes_present"] is not False
+    ):
+        raise EnrollmentError("Le contrat de chaîne logicielle diffère.")
+    python_closures = _exact_mapping(
+        supply["python_closures"], {"orchestrator", "broker"}, "python_closures"
+    )
+    if python_closures != {
+        "orchestrator": {
+            "path": "orchestrator/requirements-runtime.lock",
+            "sha256": "ef5bc46ffd092e466ed60e653990cc65c8062f5edc086b543b1879af2f27afd7",
+            "distributions": 29,
+        },
+        "broker": {
+            "path": "broker/requirements-mcp.txt",
+            "sha256": "c7866b7b58d9e455647369f95c72a695e209943ff8e34e4ff4ec6fec538dd234",
+            "distributions": 32,
+        },
+    }:
+        raise EnrollmentError("Les fermetures Python diffèrent.")
+    atlas_supply = _exact_mapping(
+        supply["atlas"],
+        {
+            "exit_code",
+            "known_blocking_vulnerabilities",
+            "warnings",
+            "unmaintained_transitive_crates",
+            "advisories",
+        },
+        "supply_chain.atlas",
+    )
+    if atlas_supply != {
+        "exit_code": 0,
+        "known_blocking_vulnerabilities": 0,
+        "warnings": 7,
+        "unmaintained_transitive_crates": 6,
+        "advisories": [
+            {
+                "id": "RUSTSEC-2024-0429",
+                "crate": "glib",
+                "version": "0.18.5",
+                "classification": "unsound-transitive",
+            }
+        ],
+    }:
+        raise EnrollmentError("L'attestation de chaîne Atlas diffère.")
+    hermes_supply = _exact_mapping(
+        supply["hermes"],
+        {
+            "uv_version",
+            "uv_lock_from_pinned_commit",
+            "locked_sync",
+            "bootstrap_script_pinned",
+            "source_archive_vendored",
+            "network_git_transport",
+        },
+        "supply_chain.hermes",
+    )
+    if (
+        hermes_supply["uv_version"] != "0.12.0"
+        or hermes_supply["bootstrap_script_pinned"] is not False
+        or hermes_supply["source_archive_vendored"] is not True
+        or hermes_supply["network_git_transport"] is not False
+        or hermes_supply["uv_lock_from_pinned_commit"] is not True
+        or hermes_supply["locked_sync"] is not True
+    ):
+        raise EnrollmentError("Le contrat de chaîne Hermes diffère.")
+
+    host = _exact_mapping(document["host"], {"os", "docker"}, "host")
+    if host["os"] != {"id": "fedora", "version_id": "44", "architecture": "x86_64"}:
+        raise EnrollmentError("Le contrat hôte diffère.")
+    docker = _exact_mapping(
+        host["docker"],
+        {
+            "mode",
+            "initial_state",
+            "in_place_upgrade_supported",
+            "rollback_preserves_named_volumes",
+            "rollback_named_volumes_root",
+            "service",
+            "units",
+            "preinstalled_dependencies",
+            "daemon_config",
+            "network",
+            "repositories",
+            "install_weak_dependencies",
+            "packages",
+            "dependencies",
+        },
+        "host.docker",
+    )
+    fixed_docker = {
+        "mode": "rootful",
+        "initial_state": "absent",
+        "in_place_upgrade_supported": False,
+        "rollback_preserves_named_volumes": True,
+        "rollback_named_volumes_root": "/var/backups/zulip-local",
+        "service": "docker.service",
+        "units": ["containerd.service", "docker.socket", "docker.service"],
+        "preinstalled_dependencies": ["container-selinux", "iptables-nft", "nftables"],
+        "daemon_config": {
+            "bridge": "none",
+            "firewall-backend": "iptables",
+            "ip-forward": False,
+            "ip-masq": False,
+            "ip6tables": False,
+            "iptables": True,
+            "userland-proxy": True,
+        },
+        "network": {
+            "firewalld_required": True,
+            "fixed_networks": {
+                "zulip-local_backend": {
+                    "bridge_name": "zulip-backend",
+                    "compose_network": "backend",
+                    "internal": True,
+                    "masquerade": False,
+                    "subnet": "172.30.10.0/24",
+                },
+                "zulip-local_frontend": {
+                    "bridge_name": "zulip-frontend",
+                    "compose_network": "frontend",
+                    "internal": False,
+                    "masquerade": False,
+                    "subnet": "172.30.11.0/24",
+                },
+            },
+            "ipv4_forwarding_required": True,
+            "ipv6_forwarding_required": False,
+        },
+        "repositories": ["fedora", "updates"],
+        "install_weak_dependencies": False,
+    }
+    if any(docker[key] != value for key, value in fixed_docker.items()):
+        raise EnrollmentError("Le contrat Docker/réseau local diffère.")
+    expected_packages = {
+        "moby-engine": "moby-engine-0:29.7.2-1.fc44.x86_64",
+        "docker-cli": "docker-cli-0:29.7.2-1.fc44.x86_64",
+        "docker-compose": "docker-compose-0:5.5.0-1.fc44.x86_64",
+    }
+    expected_dependencies = {
+        "pigz": "pigz-0:2.8-8.fc44.x86_64",
+        "moby-filesystem": "moby-filesystem-0:29.7.2-1.fc44.noarch",
+        "container-selinux": "container-selinux-4:2.250.0-1.fc44.noarch",
+        "containerd": "containerd-0:2.3.4-1.fc44.x86_64",
+        "nftables": "nftables-1:1.1.6-2.fc44.x86_64",
+        "iptables-libs": "iptables-libs-0:1.8.11-13.fc44.x86_64",
+        "libmnl": "libmnl-0:1.0.5-9.fc44.x86_64",
+        "libnftnl": "libnftnl-0:1.3.1-2.fc44.x86_64",
+        "nftables-services": "nftables-services-1:1.1.6-2.fc44.noarch",
+        "libnetfilter_conntrack": "libnetfilter_conntrack-0:1.1.1-1.fc44.x86_64",
+        "libnfnetlink": "libnfnetlink-0:1.0.1-32.fc44.x86_64",
+        "tini-static": "tini-static-0:0.19.0-12.fc44.x86_64",
+        "runc": "runc-2:1.5.1-1.fc44.x86_64",
+        "iptables-nft": "iptables-nft-0:1.8.11-13.fc44.x86_64",
+        "selinux-policy": "selinux-policy-0:44.8-1.fc44.noarch",
+        "libseccomp": "libseccomp-0:2.6.1-2.fc44.x86_64",
+        "systemd": "systemd-0:259.8-1.fc44.x86_64",
+        "systemd-shared": "systemd-shared-0:259.8-1.fc44.x86_64",
+        "jansson": "jansson-0:2.14-4.fc44.x86_64",
+        "libselinux-utils": "libselinux-utils-0:3.11-1.fc44.x86_64",
+        "policycoreutils": "policycoreutils-0:3.11-2.fc44.x86_64",
+        "diffutils": "diffutils-0:3.12-5.fc44.x86_64",
+        "selinux-policy-targeted": "selinux-policy-targeted-0:44.8-1.fc44.noarch",
+        "libedit": "libedit-0:3.1-59.20260512cvs.fc44.x86_64",
+        "cryptsetup-libs": "cryptsetup-libs-0:2.8.7-1.fc44.x86_64",
+        "device-mapper-libs": "device-mapper-libs-0:1.02.212-2.fc44.x86_64",
+        "device-mapper": "device-mapper-0:1.02.212-2.fc44.x86_64",
+        "libfdisk": "libfdisk-0:2.41.5-1.fc44.x86_64",
+        "util-linux": "util-linux-0:2.41.5-1.fc44.x86_64",
+        "liblastlog2": "liblastlog2-0:2.41.5-1.fc44.x86_64",
+        "rpm-plugin-selinux": "rpm-plugin-selinux-0:6.0.2-1.fc44.x86_64",
+    }
+    if docker["packages"] != expected_packages or docker["dependencies"] != expected_dependencies:
+        raise EnrollmentError("Le jeu exact des paquets Docker diffère.")
+    cutover = _exact_mapping(document["cutover"], {"local_inference"}, "cutover")
+    if cutover["local_inference"] != {
+        "mode": "disabled",
+        "units": ["ollama.service"],
+        "preserve_historical_artifacts": True,
+    }:
+        raise EnrollmentError("Le contrat de désactivation locale diffère.")
+
+    runtime = _exact_mapping(
+        document["runtime"],
+        {
+            "encrypted_credentials",
+            "zulip_owner_password_file",
+            "finance_isolation",
+            "provider_credential_scopes",
+            "provider_optional_credential_scopes",
+            "dynamic_services",
+            "services",
+        },
+        "runtime",
+    )
+    encrypted_credentials = _string_list(
+        runtime["encrypted_credentials"], "runtime.encrypted_credentials"
+    )
+    expected_encrypted_credentials = [
+        "ops-orchestrator-openbao-role-id",
+        "ops-orchestrator-openbao-secret-id",
+        "hermes-openbao-role-id",
+        "hermes-openbao-secret-id",
+        "hermes-openbao-secret-id-accessor",
+        "zulip-local-runtime-role-id",
+        "zulip-local-runtime-secret-id",
+        "zulip-local-runtime-secret-id-accessor",
+        "zulip-local-bootstrap-role-id",
+        "zulip-local-bootstrap-secret-id",
+        "zulip-local-bootstrap-secret-id-accessor",
+        "zulip-openbao-role-id",
+        "zulip-openbao-secret-id",
+        "zulip-openbao-secret-id-accessor",
+    ]
+    if encrypted_credentials != expected_encrypted_credentials:
+        raise EnrollmentError("Le jeu de références chiffrées diffère.")
+    services = _string_list(runtime["services"], "runtime.services")
+    expected_services = [
+        "ops-orchestrator-secrets.service",
+        "ops-orchestrator-provider-finance-daemon.service",
+        "ops-orchestrator.service",
+        "ops-orchestrator-hermes-facade.service",
+        "ops-orchestrator-metrics.timer",
+        "ops-orchestrator-provider-finance.timer",
+        "hermes-gateway.service",
+        "zulip-local-secrets.service",
+        "zulip-local.service",
+        "zulip-local-health.timer",
+        "zulip-local-backup.timer",
+        "zulip-alertmanager-query.socket",
+        "zulip-approval-bridge.service",
+        "ops-broker-audit-verify.timer",
+        "ops-broker-backup.timer",
+        "ops-broker-audit-verify.service",
+        "ops-broker-backup.service",
+        "ops-broker-backup-metric-success.service",
+        "ops-broker-backup-metric-failure.service",
+        "zulip-local-health.service",
+        "zulip-local-backup.service",
+        "zulip-alertmanager-query.service",
+    ]
+    if services != expected_services:
+        raise EnrollmentError("Le jeu d'unités runtime diffère.")
+    if runtime["dynamic_services"] != ["zulip-alertmanager-query.service"]:
+        raise EnrollmentError("Les unités dynamiques runtime diffèrent.")
+    if runtime["zulip_owner_password_file"] != "/run/ops-control-plane-deployment/zulip-owner-password":
+        raise EnrollmentError("Le canal du compte propriétaire Zulip diffère.")
+    finance = _exact_mapping(
+        runtime["finance_isolation"],
+        {"worker_user", "worker_group", "client_user", "socket_path", "socket_mode", "stateless"},
+        "runtime.finance_isolation",
+    )
+    if finance != {
+        "worker_user": "opsfinance",
+        "worker_group": "opsfinance",
+        "client_user": "opsorchestrator",
+        "socket_path": "/run/ops-orchestrator-finance/api.sock",
+        "socket_mode": "0660",
+        "stateless": True,
+    }:
+        raise EnrollmentError("Le contrat d'isolation finance diffère.")
+    expected_scope_services = {
+        "ops-orchestrator.service",
+        "ops-orchestrator-provider-finance-daemon.service",
+        "ops-orchestrator-provider-finance.service",
+        "ops-orchestrator-hermes-facade.service",
+    }
+    for section in ("provider_credential_scopes", "provider_optional_credential_scopes"):
+        scopes = runtime[section]
+        if not isinstance(scopes, dict) or set(scopes) != expected_scope_services:
+            raise EnrollmentError(f"Les portées runtime sont invalides : {section}")
+        for service, credentials in scopes.items():
+            values = _string_list(
+                credentials, f"runtime.{section}.{service}", minimum=0
+            )
+            if any(
+                re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value) is None
+                for value in values
+            ):
+                raise EnrollmentError(f"Référence runtime invalide : {section}")
+    required_scopes = runtime["provider_credential_scopes"]
+    optional_scopes = runtime["provider_optional_credential_scopes"]
+    if any(
+        not set(optional_scopes[service]).issubset(required_scopes[service])
+        for service in expected_scope_services
+    ):
+        raise EnrollmentError("Une portée optionnelle excède sa portée autorisée.")
+    expected_provider_keys = [
+        "qwen-api-key",
+        "deepseek-api-key",
+        "z-ai-api-key",
+        "mistral-ai-api-key",
+        "minimax-api-key",
+        "google-api-key",
+        "cohere-api-key",
+        "moonshot-api-key",
+        "tencent-api-key",
+        "xai-api-key",
+        "openai-api-key",
+        "anthropic-api-key",
+    ]
+    expected_finance_keys = [
+        "deepseek-api-key",
+        "moonshot-api-key",
+        "stepfun-api-key",
+    ]
+    if required_scopes != {
+        "ops-orchestrator.service": expected_provider_keys,
+        "ops-orchestrator-provider-finance-daemon.service": expected_finance_keys,
+        "ops-orchestrator-provider-finance.service": [],
+        "ops-orchestrator-hermes-facade.service": [
+            "qwen-api-key",
+            "deepseek-api-key",
+            "hermes-facade-token",
+        ],
+    } or optional_scopes != {
+        "ops-orchestrator.service": expected_provider_keys,
+        "ops-orchestrator-provider-finance-daemon.service": expected_finance_keys,
+        "ops-orchestrator-provider-finance.service": [],
+        "ops-orchestrator-hermes-facade.service": [
+            "qwen-api-key",
+            "deepseek-api-key",
+        ],
+    }:
+        raise EnrollmentError("Le contrat exact des portées runtime diffère.")
+
+    rollback = _exact_mapping(
+        document["rollback"],
+        {
+            "automatic_on_failure",
+            "explicit_last_transaction",
+            "zulip_restore_identity_file",
+            "secret_material_backed_up",
+        },
+        "rollback",
+    )
+    if rollback != {
+        "automatic_on_failure": True,
+        "explicit_last_transaction": False,
+        "zulip_restore_identity_file": "/run/ops-control-plane-deployment/zulip-restore-identity",
+        "secret_material_backed_up": False,
+    }:
+        raise EnrollmentError("Le contrat de rollback diffère.")
+
+
+def _validate_contract(
+    manifest_raw: bytes, helper_raw: bytes, launcher_raw: bytes
+) -> None:
+    try:
+        manifest = json.loads(
+            manifest_raw, object_pairs_hook=_duplicate_safe_object
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise EnrollmentError("Le manifeste de release est invalide.") from exc
+    if not isinstance(manifest, dict):
+        raise EnrollmentError("Le manifeste de release est invalide.")
+    _validate_manifest_structure(manifest)
+    bootstrap = manifest.get("bootstrap")
+    anchor = manifest.get("trust_anchor")
+    if not isinstance(bootstrap, dict) or not isinstance(anchor, dict):
+        raise EnrollmentError("Le contrat d'ancre est absent.")
+    expected_anchor = {
+        "version_directory": str(ANCHOR_ROOT),
+        "manifest_path": str(ANCHOR_ROOT / "release-manifest.v1.json"),
+        "bootstrap_helper_path": str(ANCHOR_ROOT / "control-plane-bootstrap"),
+        "launcher_path": str(ANCHOR_ROOT / "launch-atlas-reviewed-rpm"),
+        "manifest_mode": "0444",
+        "bootstrap_helper_mode": "0555",
+        "launcher_mode": "0555",
+        "launcher_sha256": hashlib.sha256(launcher_raw).hexdigest(),
+        "enrollment": "physical-polkit-tofu-v1",
+    }
+    helper_sha256 = bootstrap.get("helper_sha256")
+    launcher_sha256 = hashlib.sha256(launcher_raw).hexdigest()
+    if (
+        manifest.get("release_id") != RELEASE_ID
+        or anchor != expected_anchor
+        or not isinstance(helper_sha256, str)
+        or SHA256_RE.fullmatch(helper_sha256) is None
+        or helper_sha256 != hashlib.sha256(helper_raw).hexdigest()
+        or launcher_sha256 != REVIEWED_LAUNCHER_SHA256
+    ):
+        raise EnrollmentError("Les octets ne correspondent pas au contrat d'ancre revu.")
+    _validate_python_program(
+        helper_raw,
+        "bootstrap",
+        (b"gui-corrective-preflight", b"def main() -> int:"),
+    )
+    _validate_python_program(
+        launcher_raw,
+        "launcher",
+        (b"def prepare_reviewed_payload(", b"os.execve(executable"),
+    )
+
+
+def _authority_present(raw: bytes) -> bool:
+    if raw.count(AUTHORITY_BYTES) != 1:
+        return False
+    start = raw.index(AUTHORITY_BYTES)
+    before = raw[:start]
+    after = raw[start + len(AUTHORITY_BYTES):]
+    return (
+        (not before or before.endswith(b"\n"))
+        and (not after or after.startswith(b"\n"))
+    )
+
+
+def _validate_published(root: Path, expected: dict[str, bytes]) -> None:
+    _require_root_directory(root, 0o555)
+    try:
+        entries = {entry.name for entry in os.scandir(root)}
+    except OSError as exc:
+        raise EnrollmentError("L'ancre publiée est illisible.") from exc
+    if entries != set(ANCHOR_FILES):
+        raise EnrollmentError("L'ancre publiée contient des fichiers inattendus.")
+    for name, mode in ANCHOR_FILES.items():
+        observed = _read_exact(
+            root / name,
+            max(len(expected[name]), 1),
+            owner_uid=ROOT_UID,
+            owner_gid=ROOT_GID,
+            mode=mode,
+        )
+        if observed != expected[name]:
+            raise EnrollmentError(f"L'ancre publiée diffère : {name}")
+
+
+def _read_anchor_payload(root: Path) -> dict[str, bytes]:
+    """Read one immutable anchor after checking its complete root contract."""
+    _require_root_directory(root, 0o555)
+    try:
+        entries = {entry.name for entry in os.scandir(root)}
+    except OSError as exc:
+        raise EnrollmentError("L'ancre root est illisible.") from exc
+    if entries != set(ANCHOR_FILES):
+        raise EnrollmentError("L'ancre root contient des fichiers inattendus.")
+    return {
+        name: _read_exact(
+            root / name,
+            ANCHOR_MAXIMUMS[name],
+            owner_uid=ROOT_UID,
+            owner_gid=ROOT_GID,
+            mode=mode,
+        )
+        for name, mode in ANCHOR_FILES.items()
+    }
+
+
+def _is_exact_payload(
+    payload: dict[str, bytes], expected_sha256: dict[str, str]
+) -> bool:
+    return all(
+        hashlib.sha256(payload[name]).hexdigest() == expected_digest
+        for name, expected_digest in expected_sha256.items()
+    )
+
+
+def _is_legacy_payload(payload: dict[str, bytes]) -> bool:
+    return _is_exact_payload(payload, LEGACY_SHA256)
+
+
+def _is_intermediate_payload(payload: dict[str, bytes]) -> bool:
+    return _is_exact_payload(payload, INTERMEDIATE_SHA256)
+
+
+def _is_pre_third_payload(payload: dict[str, bytes]) -> bool:
+    return _is_exact_payload(payload, PRE_THIRD_SHA256)
+
+
+def _validate_legacy_anchor(root: Path) -> None:
+    payload = _read_anchor_payload(root)
+    if not _is_legacy_payload(payload):
+        raise EnrollmentError("L'ancienne ancre ne correspond pas aux octets autorisés.")
+
+
+def _validate_intermediate_anchor(root: Path) -> None:
+    payload = _read_anchor_payload(root)
+    if not _is_intermediate_payload(payload):
+        raise EnrollmentError("L'ancre intermédiaire ne correspond pas aux octets autorisés.")
+
+
+def _validate_pre_third_anchor(root: Path) -> None:
+    payload = _read_anchor_payload(root)
+    if not _is_pre_third_payload(payload):
+        raise EnrollmentError(
+            "La troisième ancre prédécesseur ne correspond pas aux octets autorisés."
+        )
+
+
+def _intermediate_history_anchor() -> Path:
+    """Return the fixed second archive path while remaining test-relocatable."""
+    return HISTORY_PARENT / f"{ANCHOR_ROOT.name}.pre-second-reconciliation"
+
+
+def _third_history_anchor() -> Path:
+    """Return the fixed third archive path while remaining test-relocatable."""
+    return HISTORY_PARENT / f"{ANCHOR_ROOT.name}.pre-third-reconciliation"
+
+
+def _inspect_history_state() -> tuple[bool, bool, bool]:
+    """Validate and report the three append-only, ordered archive generations."""
+    intermediate_history = _intermediate_history_anchor()
+    third_history = _third_history_anchor()
+    if not os.path.lexists(HISTORY_PARENT):
+        if any(
+            os.path.lexists(path)
+            for path in (HISTORY_ANCHOR, intermediate_history, third_history)
+        ):
+            raise EnrollmentError("Le chemin d'historique root est incohérent.")
+        return False, False, False
+    _require_root_directory(HISTORY_PARENT, 0o755)
+    try:
+        entries = {entry.name for entry in os.scandir(HISTORY_PARENT)}
+    except OSError as exc:
+        raise EnrollmentError("L'historique root est illisible.") from exc
+    allowed = {HISTORY_ANCHOR.name, intermediate_history.name, third_history.name}
+    if not entries.issubset(allowed):
+        raise EnrollmentError("L'historique root contient un objet inattendu.")
+    legacy_present = HISTORY_ANCHOR.name in entries
+    intermediate_present = intermediate_history.name in entries
+    third_present = third_history.name in entries
+    if intermediate_present and not legacy_present:
+        raise EnrollmentError("L'historique intermédiaire existe sans l'historique initial.")
+    if third_present and not intermediate_present:
+        raise EnrollmentError(
+            "Le troisième historique existe sans l'historique intermédiaire."
+        )
+    if legacy_present:
+        _validate_legacy_anchor(HISTORY_ANCHOR)
+    if intermediate_present:
+        _validate_intermediate_anchor(intermediate_history)
+    if third_present:
+        _validate_pre_third_anchor(third_history)
+    return legacy_present, intermediate_present, third_present
+
+
+def _inspect_history() -> bool:
+    """Return whether at least one exact immutable archive is present."""
+    return any(_inspect_history_state())
+
+
+def _ensure_history_parent() -> None:
+    _require_root_directory(HISTORY_PARENT, 0o755, create=True)
+    _inspect_history_state()
+
+
+def _read_stage_candidate(path: Path, raw: bytes, final_mode: int) -> tuple[bytes, int]:
+    descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        before = os.fstat(descriptor)
+        observed_mode = stat.S_IMODE(before.st_mode)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != ROOT_UID
+            or before.st_gid != ROOT_GID
+            or before.st_nlink != 1
+            or observed_mode not in {0o600, final_mode}
+            or before.st_size > len(raw)
+        ):
+            raise EnrollmentError(f"Le temporaire root n'est pas réconciliable : {path.name}")
+        observed = b""
+        while len(observed) <= len(raw):
+            chunk = os.read(descriptor, len(raw) + 1 - len(observed))
+            if not chunk:
+                break
+            observed += chunk
+        after = os.fstat(descriptor)
+        if (
+            len(observed) != before.st_size
+            or after.st_dev != before.st_dev
+            or after.st_ino != before.st_ino
+            or after.st_size != before.st_size
+            or after.st_mtime_ns != before.st_mtime_ns
+            or after.st_ctime_ns != before.st_ctime_ns
+            or after.st_uid != ROOT_UID
+            or after.st_gid != ROOT_GID
+            or after.st_nlink != 1
+            or stat.S_IMODE(after.st_mode) != observed_mode
+        ):
+            raise EnrollmentError(f"Le temporaire root a changé : {path.name}")
+        return observed, observed_mode
+    finally:
+        os.close(descriptor)
+
+
+def _publish_stage_file(path: Path, raw: bytes, final_mode: int) -> None:
+    if os.path.lexists(path):
+        observed = _read_exact(
+            path,
+            max(len(raw), 1),
+            owner_uid=ROOT_UID,
+            owner_gid=ROOT_GID,
+            mode=final_mode,
+        )
+        if observed != raw:
+            raise EnrollmentError(f"Le staging root diffère : {path.name}")
+        return
+    temporary = path.with_name(f".{path.name}.next")
+    if os.path.lexists(temporary):
+        observed, observed_mode = _read_stage_candidate(temporary, raw, final_mode)
+        if observed_mode == final_mode:
+            if observed != raw:
+                raise EnrollmentError(f"Le temporaire root diffère : {path.name}")
+            os.rename(temporary, path)
+            _fsync_directory(path.parent)
+            return
+        if not raw.startswith(observed):
+            raise EnrollmentError(f"Le temporaire root n'est pas un préfixe exact : {path.name}")
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_TRUNC | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+    else:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o600,
+        )
+    try:
+        view = memoryview(raw)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise EnrollmentError("Écriture incomplète de l'ancre root.")
+            view = view[written:]
+        os.fsync(descriptor)
+        os.fchown(descriptor, ROOT_UID, ROOT_GID)
+        os.fsync(descriptor)
+        os.fchmod(descriptor, final_mode)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.rename(temporary, path)
+    _fsync_directory(path.parent)
+
+
+def _prepare_staging(expected: dict[str, bytes]) -> None:
+    if not os.path.lexists(STAGING_ROOT):
+        os.mkdir(STAGING_ROOT, 0o700)
+        os.chown(STAGING_ROOT, ROOT_UID, ROOT_GID)
+        os.chmod(STAGING_ROOT, 0o700)
+        _fsync_directory(ANCHOR_PARENT)
+    staging_metadata = STAGING_ROOT.lstat()
+    if (
+        stat.S_ISDIR(staging_metadata.st_mode)
+        and staging_metadata.st_uid == ROOT_UID
+        and staging_metadata.st_gid == ROOT_GID
+        and stat.S_IMODE(staging_metadata.st_mode) == 0o000
+    ):
+        os.chmod(STAGING_ROOT, 0o700)
+        _fsync_directory(ANCHOR_PARENT)
+        staging_metadata = STAGING_ROOT.lstat()
+    if (
+        not stat.S_ISDIR(staging_metadata.st_mode)
+        or staging_metadata.st_uid != ROOT_UID
+        or staging_metadata.st_gid != ROOT_GID
+        or stat.S_IMODE(staging_metadata.st_mode) not in {0o700, 0o555}
+    ):
+        raise EnrollmentError("Le répertoire de staging root n'est pas sûr.")
+    if stat.S_IMODE(staging_metadata.st_mode) == 0o555:
+        os.chmod(STAGING_ROOT, 0o700)
+        _fsync_directory(ANCHOR_PARENT)
+    _require_root_directory(STAGING_ROOT, 0o700)
+    try:
+        entries = {entry.name for entry in os.scandir(STAGING_ROOT)}
+    except OSError as exc:
+        raise EnrollmentError("Le staging root est illisible.") from exc
+    allowed_stage_entries = set(ANCHOR_FILES) | {
+        f".{name}.next" for name in ANCHOR_FILES
+    }
+    if not entries.issubset(allowed_stage_entries):
+        raise EnrollmentError("Le staging root contient un fichier inattendu.")
+    for name, mode in ANCHOR_FILES.items():
+        _publish_stage_file(STAGING_ROOT / name, expected[name], mode)
+    os.chmod(STAGING_ROOT, 0o555)
+    _fsync_directory(STAGING_ROOT)
+    _fsync_directory(ANCHOR_PARENT)
+    _validate_published(STAGING_ROOT, expected)
+
+
+def _open_lock() -> int:
+    created = False
+    try:
+        descriptor = os.open(
+            LOCK_PATH,
+            os.O_RDWR
+            | os.O_CREAT
+            | os.O_EXCL
+            | os.O_CLOEXEC
+            | os.O_NOFOLLOW,
+            0o600,
+        )
+        created = True
+    except FileExistsError:
+        descriptor = os.open(
+            LOCK_PATH, os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
+        )
+    try:
+        metadata = os.fstat(descriptor)
+        recoverable_zero_mode = (
+            not created
+            and stat.S_ISREG(metadata.st_mode)
+            and metadata.st_uid == ROOT_UID
+            and metadata.st_gid == ROOT_GID
+            and metadata.st_nlink == 1
+            and metadata.st_size == 0
+            and stat.S_IMODE(metadata.st_mode) == 0o000
+        )
+        if created or recoverable_zero_mode:
+            os.fchown(descriptor, ROOT_UID, ROOT_GID)
+            os.fchmod(descriptor, 0o600)
+            os.fsync(descriptor)
+            metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != ROOT_UID
+            or metadata.st_gid != ROOT_GID
+            or metadata.st_nlink != 1
+            or metadata.st_size != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
+            raise EnrollmentError("Le verrou root de l'ancre n'est pas sûr.")
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _publish_or_reconcile(expected: dict[str, bytes]) -> str:
+    """Publish current bytes and preserve all authorized predecessor anchors.
+
+    Every rename is followed by fsync of both affected directories.  If power
+    is lost after any predecessor -> history but before staging -> anchor,
+    the next invocation requires the already sealed staging object and
+    completes that same move.  No archive is ever replaced or removed.
+    """
+    (
+        legacy_history_present,
+        intermediate_history_present,
+        third_history_present,
+    ) = _inspect_history_state()
+    history_present = any(
+        (legacy_history_present, intermediate_history_present, third_history_present)
+    )
+    anchor_kind = "absent"
+    payload: dict[str, bytes] | None = None
+    if os.path.lexists(ANCHOR_ROOT):
+        payload = _read_anchor_payload(ANCHOR_ROOT)
+        if payload == expected:
+            anchor_kind = "current"
+        elif _is_legacy_payload(payload):
+            anchor_kind = "legacy"
+        elif _is_intermediate_payload(payload):
+            anchor_kind = "intermediate"
+        elif _is_pre_third_payload(payload):
+            anchor_kind = "pre-third"
+        else:
+            raise EnrollmentError(
+                "L'ancre root existante n'est ni un prédécesseur autorisé ni la cible courante."
+            )
+
+    if anchor_kind == "current":
+        if os.path.lexists(STAGING_ROOT):
+            raise EnrollmentError("Un staging inattendu subsiste après publication.")
+        if payload is None:
+            raise EnrollmentError("L'identité de l'ancre courante est absente.")
+        if _is_legacy_payload(payload) and legacy_history_present:
+            raise EnrollmentError("L'ancienne ancre existe à deux emplacements.")
+        if _is_intermediate_payload(payload) and intermediate_history_present:
+            raise EnrollmentError("L'ancre intermédiaire existe à deux emplacements.")
+        if _is_pre_third_payload(payload) and third_history_present:
+            raise EnrollmentError(
+                "La troisième ancre prédécesseur existe à deux emplacements."
+            )
+        return "reconciled" if history_present else "already-enrolled"
+    if anchor_kind == "legacy" and history_present:
+        raise EnrollmentError("L'ancienne ancre existe avec un historique incompatible.")
+    if anchor_kind == "intermediate" and (
+        not legacy_history_present
+        or intermediate_history_present
+        or third_history_present
+    ):
+        raise EnrollmentError("L'état historique de l'ancre intermédiaire est incohérent.")
+    if anchor_kind == "pre-third" and (
+        not legacy_history_present
+        or not intermediate_history_present
+        or third_history_present
+    ):
+        raise EnrollmentError(
+            "L'état historique de la troisième ancre prédécesseur est incohérent."
+        )
+    if anchor_kind == "absent" and history_present:
+        # Exact crash frontier: one authorized predecessor has already been
+        # archived. Publication of the *already sealed* target is the only
+        # permitted transition. Never rebuild it from a later confirmation:
+        # that would break the binding between confirmation A and staging A.
+        _inspect_history_state()
+        if not os.path.lexists(STAGING_ROOT):
+            raise EnrollmentError(
+                "Le staging physiquement confirmé manque après archivage."
+            )
+        _validate_published(STAGING_ROOT, expected)
+    else:
+        _prepare_staging(expected)
+
+    if anchor_kind == "legacy":
+        _ensure_history_parent()
+        if os.path.lexists(HISTORY_ANCHOR):
+            raise EnrollmentError("L'historique exact existe déjà.")
+        os.rename(ANCHOR_ROOT, HISTORY_ANCHOR)
+        _fsync_directory(HISTORY_PARENT)
+        _fsync_directory(ANCHOR_PARENT)
+        _validate_legacy_anchor(HISTORY_ANCHOR)
+        anchor_kind = "absent"
+        legacy_history_present = True
+        history_present = True
+    elif anchor_kind == "intermediate":
+        _ensure_history_parent()
+        if _inspect_history_state() != (True, False, False):
+            raise EnrollmentError("L'historique requis avant seconde réconciliation diffère.")
+        intermediate_history = _intermediate_history_anchor()
+        if os.path.lexists(intermediate_history):
+            raise EnrollmentError("Le second historique exact existe déjà.")
+        os.rename(ANCHOR_ROOT, intermediate_history)
+        _fsync_directory(HISTORY_PARENT)
+        _fsync_directory(ANCHOR_PARENT)
+        _validate_intermediate_anchor(intermediate_history)
+        anchor_kind = "absent"
+        intermediate_history_present = True
+        history_present = True
+    elif anchor_kind == "pre-third":
+        _ensure_history_parent()
+        if _inspect_history_state() != (True, True, False):
+            raise EnrollmentError(
+                "L'historique requis avant troisième réconciliation diffère."
+            )
+        third_history = _third_history_anchor()
+        if os.path.lexists(third_history):
+            raise EnrollmentError("Le troisième historique exact existe déjà.")
+        os.rename(ANCHOR_ROOT, third_history)
+        _fsync_directory(HISTORY_PARENT)
+        _fsync_directory(ANCHOR_PARENT)
+        _validate_pre_third_anchor(third_history)
+        anchor_kind = "absent"
+        third_history_present = True
+        history_present = True
+
+    if os.path.lexists(ANCHOR_ROOT):
+        raise EnrollmentError("Une ancre concurrente est apparue.")
+    os.rename(STAGING_ROOT, ANCHOR_ROOT)
+    _fsync_directory(ANCHOR_PARENT)
+    _validate_published(ANCHOR_ROOT, expected)
+    if history_present:
+        observed_history = _inspect_history_state()
+        if observed_history != (
+            legacy_history_present,
+            intermediate_history_present,
+            third_history_present,
+        ):
+            raise EnrollmentError("L'historique a changé pendant la publication.")
+        return "reconciled"
+    return "enrolled"
+
+
+def _confirmation_digest(nonce: str, snapshots: tuple[bytes, ...]) -> str:
+    identities = ":".join(hashlib.sha256(raw).hexdigest() for raw in snapshots)
+    return hashlib.sha256(
+        f"atlas-trust-anchor-v1:{RELEASE_ID}:{nonce}:{identities}".encode("ascii")
+    ).hexdigest()
+
+
+def enroll() -> dict[str, str]:
+    os.umask(0o077)
+    if os.getuid() != 0 or os.geteuid() != 0 or os.getgid() != 0:
+        raise EnrollmentError("L'enrôlement exige l'authentification Polkit locale.")
+    if len(sys.argv) != 9:
+        raise EnrollmentError("Le canal d'enrôlement scellé est invalide.")
+    numeric = sys.argv[1:7]
+    if any(not value.isascii() or not value.isdigit() or len(value) > 10 for value in numeric):
+        raise EnrollmentError("Le canal d'enrôlement scellé est invalide.")
+    (
+        parent_pid,
+        manifest_fd,
+        helper_fd,
+        launcher_fd,
+        authority_fd,
+        installer_fd,
+    ) = (int(value) for value in numeric)
+    nonce = sys.argv[7]
+    confirmed_digest = sys.argv[8]
+    if (
+        parent_pid != os.getppid()
+        or not re.fullmatch(r"[0-9a-f]{32}", nonce)
+        or SHA256_RE.fullmatch(confirmed_digest) is None
+        or sys.argv[0] != f"/proc/{parent_pid}/fd/{installer_fd}"
+    ):
+        raise EnrollmentError("Le parent ou la confirmation d'enrôlement diffère.")
+    account = pwd.getpwnam("ops-user")
+    snapshot_policy = {"owner_uid": account.pw_uid, "owner_gid": account.pw_gid}
+    manifest_raw = _read_sealed_snapshot(
+        parent_pid,
+        manifest_fd,
+        MAX_MANIFEST_BYTES,
+        **snapshot_policy,
+    )
+    helper_raw = _read_sealed_snapshot(
+        parent_pid,
+        helper_fd,
+        MAX_HELPER_BYTES,
+        **snapshot_policy,
+    )
+    launcher_raw = _read_sealed_snapshot(
+        parent_pid,
+        launcher_fd,
+        MAX_LAUNCHER_BYTES,
+        **snapshot_policy,
+    )
+    authority_raw = _read_sealed_snapshot(
+        parent_pid,
+        authority_fd,
+        MAX_AUTHORITY_BYTES,
+        **snapshot_policy,
+    )
+    installer_raw = _read_sealed_snapshot(
+        parent_pid,
+        installer_fd,
+        MAX_INSTALLER_BYTES,
+        **snapshot_policy,
+    )
+    snapshots = (manifest_raw, helper_raw, launcher_raw, authority_raw, installer_raw)
+    if _confirmation_digest(nonce, snapshots) != confirmed_digest:
+        raise EnrollmentError("La confirmation physique ne correspond pas aux snapshots scellés.")
+    if not _authority_present(authority_raw):
+        raise EnrollmentError("L'autorité corrective exacte n'est pas publiée dans AGENTS.md.")
+    _validate_contract(manifest_raw, helper_raw, launcher_raw)
+    expected = {
+        "release-manifest.v1.json": manifest_raw,
+        "control-plane-bootstrap": helper_raw,
+        "launch-atlas-reviewed-rpm": launcher_raw,
+    }
+
+    lock_descriptor = _open_lock()
+    try:
+        fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+        _require_root_directory(Path("/usr"), 0o755)
+        _require_root_directory(Path("/usr/local"), 0o755)
+        _require_root_directory(Path("/usr/local/lib"), 0o755)
+        _require_root_directory(ANCHOR_PARENT, 0o755, create=True)
+        status_value = _publish_or_reconcile(expected)
+    finally:
+        os.close(lock_descriptor)
+    return {
+        "status": status_value,
+        "release_id": RELEASE_ID,
+        "manifest_sha256": hashlib.sha256(manifest_raw).hexdigest(),
+        "helper_sha256": hashlib.sha256(helper_raw).hexdigest(),
+        "launcher_sha256": hashlib.sha256(launcher_raw).hexdigest(),
+    }
+
+
+if __name__ == "__main__":
+    try:
+        print(json.dumps(enroll(), sort_keys=True, separators=(",", ":")))
+    except EnrollmentError as exc:
+        print(f"Ancre Atlas non installée : {exc}", file=sys.stderr)
+        raise SystemExit(1) from None

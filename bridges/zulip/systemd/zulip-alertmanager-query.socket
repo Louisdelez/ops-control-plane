@@ -1,0 +1,16 @@
+[Unit]
+Description=Private Unix query socket for the Zulip Alertmanager reader
+PartOf=zulip-approval-bridge.service
+
+[Socket]
+ListenStream=/run/zulip-alertmanager-query/api.sock
+SocketUser=root
+SocketGroup=zulipbridge
+SocketMode=0660
+# The root-owned parent must be traversable; SocketMode restricts connections.
+DirectoryMode=0755
+RemoveOnStop=yes
+Service=zulip-alertmanager-query.service
+
+[Install]
+WantedBy=sockets.target

@@ -1,0 +1,36 @@
+[Unit]
+Description=Publish failed ops-memory backup metric
+
+[Service]
+Type=oneshot
+User=root
+Group=node-exporter
+ExecStart=/usr/local/libexec/ops-memory-backup/ops-memory-job-metric backup failure
+UMask=0027
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+RemoveIPC=yes
+KeyringMode=private
+ReadWritePaths=/var/lib/node-exporter/textfile
+InaccessiblePaths=-/var/lib/ops-memory -/var/backups/ops-memory
+TimeoutStartSec=30

@@ -1,0 +1,8 @@
+g opsbroker-api -
+
+u opsbroker - "Deterministic Ops broker" /var/lib/ops-broker /usr/sbin/nologin
+u zulipbridge - "Zulip Ops bridge" /var/lib/zulip-approval-bridge /usr/sbin/nologin
+u node-exporter - "Prometheus node exporter" /var/lib/node-exporter /usr/sbin/nologin
+
+# Only the authenticated bridge is a member. The broker process owns the socket.
+m zulipbridge opsbroker-api

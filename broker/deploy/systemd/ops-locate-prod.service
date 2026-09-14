@@ -1,0 +1,24 @@
+[Unit]
+Description=Locate the known prod SSH host key on the fixed home LAN
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/ops-runbooks/locate-prod-worker
+TimeoutStartSec=40
+KillMode=control-group
+UMask=0077
+ProtectSystem=strict
+ReadWritePaths=/run/ops-locate-prod
+RuntimeDirectory=ops-locate-prod
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+MemoryMax=128M
+TasksMax=64
+LimitFSIZE=64K
+StandardOutput=null
+StandardError=null

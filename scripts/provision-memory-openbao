@@ -1,0 +1,682 @@
+#!/usr/bin/python3
+"""Provision the Qdrant secret and memory AppRole without exposing a value.
+
+This post-bootstrap, interactive root tool can migrate the former encrypted
+Qdrant-key blob.  The Qdrant key is committed only to OpenBao.  The RoleID and
+SecretID are the only local persistent runtime material, encrypted with the
+host and TPM2 keys through systemd-creds.
+"""
+
+from __future__ import annotations
+
+import getpass
+import hmac
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import ssl
+import stat
+import subprocess
+import sys
+import tempfile
+from typing import Any
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+BAO_ORIGIN = "https://127.0.0.1:8200"
+BAO_CA = Path("/etc/openbao.d/tls/ca.crt")
+POLICY_FILE = Path(
+    "/usr/local/share/ops-control-plane/openbao/policies/ops-memory-runtime.hcl"
+)
+POLICY_NAME = "ops-memory-runtime"
+ROLE_NAME = "ops-memory-runtime"
+KV_PATH = "/v1/kv-infra-shared/data/memory/qdrant"
+SERVICES = (
+    "ops-memory-secrets.service",
+    "ops-memory-qdrant.service",
+    "ops-memory.service",
+    "ops-memory-maintenance.service",
+    "ops-memory-maintenance.timer",
+    "ops-memory-health.service",
+    "ops-memory-health.timer",
+)
+CREDSTORE = Path("/etc/credstore.encrypted")
+CREDENTIAL_NAMES = (
+    "ops-memory-openbao-role-id",
+    "ops-memory-openbao-secret-id",
+)
+LEGACY_CREDENTIAL = CREDSTORE / "ops-memory-qdrant-api-key"
+MAX_RESPONSE_BYTES = 32 * 1024
+MAX_CREDENTIAL_BYTES = 768
+MAX_POLICY_BYTES = 16 * 1024
+HTTP_TIMEOUT_SECONDS = 3.0
+
+_IDENTIFIER_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{15,127}\Z")
+_TOKEN_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._~-]{15,511}\Z")
+_QDRANT_KEY_RE = re.compile(r"\A[A-Za-z0-9_-]{32,512}\Z")
+
+
+class ProvisioningError(RuntimeError):
+    pass
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(  # type: ignore[override]
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        raise ProvisioningError("OpenBao redirected a local request.")
+
+
+def _validated(value: Any, pattern: re.Pattern[str], description: str) -> str:
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        raise ProvisioningError(f"OpenBao returned an invalid {description}.")
+    return value
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    context = ssl.create_default_context(cafile=str(BAO_CA))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+        urllib.request.HTTPSHandler(context=context),
+    )
+
+
+def _request(
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    token: str | None = None,
+    expect_json: bool = True,
+    allow_not_found: bool = False,
+) -> dict[str, Any] | None:
+    if method not in {"GET", "POST"} or not path.startswith("/v1/"):
+        raise ProvisioningError("An internal OpenBao request was rejected.")
+    headers = {"Accept": "application/json", "User-Agent": "provision-memory-openbao/1"}
+    body = None
+    if payload is not None or method == "POST":
+        body = json.dumps(payload or {}, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if token is not None:
+        headers["X-Vault-Token"] = _validated(token, _TOKEN_RE, "token")
+    request = urllib.request.Request(
+        BAO_ORIGIN + path, data=body, headers=headers, method=method
+    )
+    try:
+        with _opener().open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            allowed = {200} if expect_json else {200, 204}
+            if response.status not in allowed:
+                raise ProvisioningError("OpenBao rejected the operation.")
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        if allow_not_found and exc.code == 404:
+            return None
+        raise ProvisioningError("OpenBao rejected the operation.") from exc
+    except (OSError, ssl.SSLError, urllib.error.URLError) as exc:
+        raise ProvisioningError("The local OpenBao request failed.") from exc
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ProvisioningError("OpenBao returned an oversized response.")
+    if not expect_json:
+        return None
+    try:
+        result = json.loads(raw)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ProvisioningError("OpenBao returned invalid JSON.") from exc
+    if not isinstance(result, dict):
+        raise ProvisioningError("OpenBao returned an invalid document.")
+    return result
+
+
+def _data(document: dict[str, Any]) -> dict[str, Any]:
+    value = document.get("data")
+    if not isinstance(value, dict):
+        raise ProvisioningError("OpenBao response data is missing.")
+    return value
+
+
+def _extract_key(document: dict[str, Any]) -> str:
+    outer = _data(document)
+    inner = outer.get("data")
+    if not isinstance(inner, dict):
+        raise ProvisioningError("The Qdrant KV object is invalid.")
+    return _validated(inner.get("api_key"), _QDRANT_KEY_RE, "Qdrant key")
+
+
+def _validate_root_regular(path: Path, description: str, *, private: bool) -> None:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise ProvisioningError(f"The {description} is unavailable.") from exc
+    forbidden = 0o077 if private else 0o022
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != 0
+        or stat.S_IMODE(info.st_mode) & forbidden
+    ):
+        raise ProvisioningError(f"The {description} has unsafe ownership or mode.")
+
+
+def _prepare_credstore() -> None:
+    try:
+        CREDSTORE.mkdir(mode=0o700, parents=True, exist_ok=True)
+        info = CREDSTORE.lstat()
+    except OSError as exc:
+        raise ProvisioningError("The encrypted credential store is unavailable.") from exc
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != 0
+        or stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        raise ProvisioningError("The encrypted credential store is unsafe.")
+    os.chmod(CREDSTORE, 0o700)
+
+
+def _read_policy() -> str:
+    _validate_root_regular(POLICY_FILE, "installed memory policy", private=False)
+    descriptor = os.open(POLICY_FILE, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        raw = os.read(descriptor, MAX_POLICY_BYTES + 1)
+        if len(raw) > MAX_POLICY_BYTES or os.read(descriptor, 1):
+            raise ProvisioningError("The installed memory policy is oversized.")
+    finally:
+        os.close(descriptor)
+    try:
+        policy = raw.decode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise ProvisioningError("The installed memory policy is invalid.") from exc
+    required = {
+        'path "kv-infra-shared/data/memory/qdrant"',
+        'path "auth/token/revoke-self"',
+    }
+    if not all(fragment in policy for fragment in required) or "list" in policy:
+        raise ProvisioningError("The installed memory policy does not have the reviewed scope.")
+    return policy
+
+
+def _configure_runtime(human_token: str, policy: str) -> None:
+    _request(
+        "POST",
+        f"/v1/sys/policies/acl/{POLICY_NAME}",
+        payload={"policy": policy},
+        token=human_token,
+        expect_json=False,
+    )
+    _request(
+        "POST",
+        f"/v1/auth/approle/role/{ROLE_NAME}",
+        payload={
+            "token_policies": [POLICY_NAME],
+            "bind_secret_id": True,
+            "secret_id_bound_cidrs": ["127.0.0.1/32"],
+            "token_bound_cidrs": ["127.0.0.1/32"],
+            "secret_id_num_uses": 1024,
+            "secret_id_ttl": "720h",
+            "token_ttl": "60s",
+            "token_max_ttl": "120s",
+            "token_explicit_max_ttl": "120s",
+            "token_num_uses": 2,
+            "token_no_default_policy": True,
+            "token_type": "service",
+        },
+        token=human_token,
+        expect_json=False,
+    )
+
+
+def _validate_role(document: dict[str, Any]) -> None:
+    role = _data(document)
+    policies = role.get("token_policies")
+    if not isinstance(policies, list) or set(policies) != {POLICY_NAME}:
+        raise ProvisioningError("The memory AppRole policies are not exact.")
+    exact = {
+        "bind_secret_id": True,
+        "token_no_default_policy": True,
+        "secret_id_num_uses": 1024,
+        "token_num_uses": 2,
+        "token_period": 0,
+        "token_type": "service",
+        "secret_id_ttl": 2_592_000,
+        "token_ttl": 60,
+        "token_max_ttl": 120,
+        "token_explicit_max_ttl": 120,
+    }
+    for field, expected in exact.items():
+        value = role.get(field)
+        if isinstance(value, bool) and not isinstance(expected, bool):
+            raise ProvisioningError(f"The memory AppRole field {field} is invalid.")
+        if value != expected:
+            raise ProvisioningError(f"The memory AppRole field {field} is unsafe.")
+    # OpenBao preserves the explicit /32 for SecretID CIDRs but canonicalizes
+    # token_bound_cidrs to the host form on some releases.  Those two exact
+    # spellings denote the same single IPv4 host; broader networks stay denied.
+    for field in ("secret_id_bound_cidrs", "token_bound_cidrs"):
+        if role.get(field) not in (["127.0.0.1/32"], ["127.0.0.1"]):
+            raise ProvisioningError(f"The memory AppRole field {field} is unsafe.")
+
+
+def _decrypt(name: str, path: Path) -> str:
+    _validate_root_regular(path, f"encrypted credential {name}", private=True)
+    completed = subprocess.run(
+        ["/usr/bin/systemd-creds", "decrypt", f"--name={name}", str(path), "-"],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0 or len(completed.stdout) > MAX_CREDENTIAL_BYTES:
+        raise ProvisioningError("An encrypted credential cannot be decrypted.")
+    try:
+        return completed.stdout.rstrip(b"\r\n").decode("ascii", errors="strict")
+    except UnicodeError as exc:
+        raise ProvisioningError("An encrypted credential is invalid.") from exc
+
+
+def _encrypt(name: str, value: str, output: Path) -> None:
+    completed = subprocess.run(
+        [
+            "/usr/bin/systemd-creds",
+            "encrypt",
+            "--with-key=host+tpm2",
+            f"--name={name}",
+            "-",
+            str(output),
+        ],
+        check=False,
+        input=(value + "\n").encode("ascii"),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0:
+        raise ProvisioningError("systemd-creds could not encrypt an AppRole credential.")
+    # systemd-creds follows the caller umask on Fedora.  Accept a root-owned,
+    # non-writable result inside our 0700 staging directory, then tighten it
+    # before performing the private-file validation.
+    _validate_root_regular(output, "new encrypted AppRole credential", private=False)
+    os.chmod(output, 0o600)
+    _validate_root_regular(output, "new encrypted AppRole credential", private=True)
+
+
+def _service_is_active(service: str) -> bool:
+    completed = subprocess.run(
+        ["/usr/bin/systemctl", "is-active", "--quiet", service],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return completed.returncode == 0
+
+
+def _test_runtime(role_id: str, secret_id: str, expected_key: str) -> None:
+    runtime_token: str | None = None
+    operation_error: BaseException | None = None
+    revocation_error: BaseException | None = None
+    try:
+        login = _request(
+            "POST",
+            "/v1/auth/approle/login",
+            payload={"role_id": role_id, "secret_id": secret_id},
+        )
+        auth = login.get("auth") if isinstance(login, dict) else None
+        if not isinstance(auth, dict):
+            raise ProvisioningError("The issued memory AppRole login failed.")
+        runtime_token = _validated(auth.get("client_token"), _TOKEN_RE, "token")
+        document = _request("GET", KV_PATH, token=runtime_token)
+        if not isinstance(document, dict):
+            raise ProvisioningError("The memory AppRole cannot read its exact secret.")
+        observed = _extract_key(document)
+        if not hmac.compare_digest(observed, expected_key):
+            raise ProvisioningError("The memory AppRole returned an unexpected secret.")
+        observed = ""
+        document.clear()
+    except BaseException as exc:
+        operation_error = exc
+    finally:
+        if runtime_token is not None:
+            try:
+                _request(
+                    "POST",
+                    "/v1/auth/token/revoke-self",
+                    token=runtime_token,
+                    expect_json=False,
+                )
+            except BaseException as exc:
+                revocation_error = exc
+            runtime_token = None
+    if operation_error is not None or revocation_error is not None:
+        raise ProvisioningError("The memory AppRole failed its exact read/revoke test.")
+
+
+def _destroy_accessor(human_token: str, accessor: str) -> None:
+    _request(
+        "POST",
+        f"/v1/auth/approle/role/{ROLE_NAME}/secret-id-accessor/destroy",
+        payload={
+            "secret_id_accessor": _validated(
+                accessor, _IDENTIFIER_RE, "SecretID accessor"
+            )
+        },
+        token=human_token,
+        expect_json=False,
+    )
+
+
+def _credential_paths() -> tuple[Path, Path]:
+    return tuple(CREDSTORE / name for name in CREDENTIAL_NAMES)  # type: ignore[return-value]
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _cleanup_staging(staging: Path) -> None:
+    if staging.parent != CREDSTORE or not staging.name.startswith(".ops-memory-openbao-"):
+        raise ProvisioningError("Refusing an unsafe transaction cleanup path.")
+    try:
+        info = staging.lstat()
+    except FileNotFoundError:
+        return
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != 0
+        or stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        raise ProvisioningError("The transaction directory is unsafe.")
+    allowed = {*CREDENTIAL_NAMES, "legacy-qdrant-api-key"}
+    for child in staging.iterdir():
+        if child.name not in allowed:
+            raise ProvisioningError("The transaction directory contains an unknown entry.")
+        # Cleanup must also recover a systemd-creds output created as 0644
+        # before an interrupted transaction had a chance to chmod it.
+        _validate_root_regular(child, "transaction credential", private=False)
+        child.unlink()
+    staging.rmdir()
+    _fsync_directory(CREDSTORE)
+
+
+def _rollback_local_transaction(
+    credential_paths: tuple[Path, Path],
+    staging: Path | None,
+    *,
+    installed_new_credentials: bool,
+    legacy_moved: bool,
+) -> None:
+    if installed_new_credentials:
+        for path in credential_paths:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+    if legacy_moved and staging is not None:
+        backup = staging / "legacy-qdrant-api-key"
+        if not backup.exists() or os.path.lexists(LEGACY_CREDENTIAL):
+            raise ProvisioningError("The legacy credential cannot be rolled back safely.")
+        os.replace(backup, LEGACY_CREDENTIAL)
+    _fsync_directory(CREDSTORE)
+    if staging is not None:
+        _cleanup_staging(staging)
+
+
+def provision() -> None:
+    if os.geteuid() != 0:
+        raise ProvisioningError("Run this provisioner as root.")
+    os.umask(0o077)
+    active = [service for service in SERVICES if _service_is_active(service)]
+    if active:
+        raise ProvisioningError("Stop all Ops memory services before provisioning.")
+    _validate_root_regular(BAO_CA, "pinned local OpenBao CA", private=False)
+    policy = _read_policy()
+    _prepare_credstore()
+
+    credential_paths = _credential_paths()
+    existing = tuple(os.path.lexists(path) for path in credential_paths)
+    if any(existing) and not all(existing):
+        raise ProvisioningError("The encrypted memory AppRole credential set is incomplete.")
+    if all(existing):
+        for path in credential_paths:
+            _validate_root_regular(path, "memory AppRole credential", private=True)
+    legacy_exists = os.path.lexists(LEGACY_CREDENTIAL)
+    if legacy_exists:
+        _validate_root_regular(LEGACY_CREDENTIAL, "legacy Qdrant credential", private=True)
+
+    confirmation = input(
+        "This centralizes the Qdrant key in OpenBao. Type PROVISION-MEMORY to continue: "
+    )
+    if confirmation != "PROVISION-MEMORY":
+        raise ProvisioningError("Provisioning cancelled.")
+    password = getpass.getpass("OpenBao password for ops-user (never stored): ")
+    if not password:
+        raise ProvisioningError("An OpenBao password is required.")
+
+    human_token: str | None = None
+    new_accessor: str | None = None
+    staging: Path | None = None
+    installed_new_credentials = False
+    legacy_moved = False
+    operation_error: BaseException | None = None
+    revocation_error: BaseException | None = None
+
+    try:
+        username = urllib.parse.quote("ops-user", safe="")
+        login = _request(
+            "POST", f"/v1/auth/userpass/login/{username}", payload={"password": password}
+        )
+        password = ""
+        auth = login.get("auth") if isinstance(login, dict) else None
+        if not isinstance(auth, dict):
+            raise ProvisioningError("The human OpenBao login failed.")
+        human_token = _validated(auth.get("client_token"), _TOKEN_RE, "token")
+
+        _configure_runtime(human_token, policy)
+        role_document = _request(
+            "GET", f"/v1/auth/approle/role/{ROLE_NAME}", token=human_token
+        )
+        if not isinstance(role_document, dict):
+            raise ProvisioningError("The memory AppRole is unavailable.")
+        _validate_role(role_document)
+
+        secret_document = _request(
+            "GET", KV_PATH, token=human_token, allow_not_found=True
+        )
+        central_key = _extract_key(secret_document) if secret_document is not None else None
+        legacy_key = (
+            _validated(
+                _decrypt("qdrant-api-key", LEGACY_CREDENTIAL),
+                _QDRANT_KEY_RE,
+                "legacy Qdrant key",
+            )
+            if legacy_exists
+            else None
+        )
+        if central_key is not None and legacy_key is not None:
+            if not hmac.compare_digest(central_key, legacy_key):
+                raise ProvisioningError(
+                    "The OpenBao and legacy Qdrant keys differ; no value was changed."
+                )
+        if central_key is None:
+            central_key = legacy_key or secrets.token_urlsafe(48)
+            central_key = _validated(central_key, _QDRANT_KEY_RE, "Qdrant key")
+            _request(
+                "POST",
+                KV_PATH,
+                payload={"data": {"api_key": central_key}},
+                token=human_token,
+                expect_json=False,
+            )
+            verify_document = _request("GET", KV_PATH, token=human_token)
+            if not isinstance(verify_document, dict) or not hmac.compare_digest(
+                _extract_key(verify_document), central_key
+            ):
+                raise ProvisioningError("The centralized Qdrant key could not be verified.")
+            verify_document.clear()
+        legacy_key = None
+        if secret_document is not None:
+            secret_document.clear()
+
+        if all(existing):
+            role_id = _validated(
+                _decrypt(CREDENTIAL_NAMES[0], credential_paths[0]),
+                _IDENTIFIER_RE,
+                "RoleID",
+            )
+            secret_id = _validated(
+                _decrypt(CREDENTIAL_NAMES[1], credential_paths[1]),
+                _IDENTIFIER_RE,
+                "SecretID",
+            )
+            _test_runtime(role_id, secret_id, central_key)
+            role_id = secret_id = ""
+        else:
+            role_id_document = _request(
+                "GET", f"/v1/auth/approle/role/{ROLE_NAME}/role-id", token=human_token
+            )
+            if not isinstance(role_id_document, dict):
+                raise ProvisioningError("The memory RoleID is unavailable.")
+            role_id = _validated(
+                _data(role_id_document).get("role_id"), _IDENTIFIER_RE, "RoleID"
+            )
+            secret_id_document = _request(
+                "POST", f"/v1/auth/approle/role/{ROLE_NAME}/secret-id", token=human_token
+            )
+            if not isinstance(secret_id_document, dict):
+                raise ProvisioningError("OpenBao did not issue a memory SecretID.")
+            secret_data = _data(secret_id_document)
+            secret_id = _validated(
+                secret_data.get("secret_id"), _IDENTIFIER_RE, "SecretID"
+            )
+            new_accessor = _validated(
+                secret_data.get("secret_id_accessor"), _IDENTIFIER_RE, "SecretID accessor"
+            )
+            if secret_data.get("secret_id_ttl") != 2_592_000:
+                raise ProvisioningError("OpenBao returned an unsafe memory SecretID TTL.")
+            _test_runtime(role_id, secret_id, central_key)
+
+            staging = Path(tempfile.mkdtemp(prefix=".ops-memory-openbao-", dir=CREDSTORE))
+            os.chmod(staging, 0o700)
+            for name, value in zip(CREDENTIAL_NAMES, (role_id, secret_id), strict=True):
+                _encrypt(name, value, staging / name)
+                decrypted = _decrypt(name, staging / name)
+                if not hmac.compare_digest(decrypted, value):
+                    raise ProvisioningError("An encrypted AppRole credential failed verification.")
+                decrypted = ""
+            role_id = secret_id = ""
+            for name in CREDENTIAL_NAMES:
+                os.replace(staging / name, CREDSTORE / name)
+            installed_new_credentials = True
+            _fsync_directory(CREDSTORE)
+
+        if legacy_exists and staging is None:
+            staging = Path(tempfile.mkdtemp(prefix=".ops-memory-openbao-", dir=CREDSTORE))
+            os.chmod(staging, 0o700)
+        if legacy_exists and staging is not None:
+            os.replace(LEGACY_CREDENTIAL, staging / "legacy-qdrant-api-key")
+            legacy_moved = True
+            _fsync_directory(CREDSTORE)
+
+        restorecon = Path("/usr/sbin/restorecon")
+        if restorecon.is_file():
+            relabel = subprocess.run(
+                [str(restorecon), "-F", *[str(path) for path in credential_paths]],
+                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if relabel.returncode != 0:
+                raise ProvisioningError("SELinux credential relabeling failed.")
+        central_key = None
+    except BaseException as exc:
+        operation_error = exc
+    finally:
+        password = ""
+        if human_token is not None:
+            if operation_error is not None and new_accessor is not None:
+                try:
+                    _destroy_accessor(human_token, new_accessor)
+                    new_accessor = None
+                except BaseException:
+                    pass
+            try:
+                _request(
+                    "POST",
+                    "/v1/auth/token/revoke-self",
+                    token=human_token,
+                    expect_json=False,
+                )
+            except BaseException as exc:
+                revocation_error = exc
+                if new_accessor is not None:
+                    try:
+                        _destroy_accessor(human_token, new_accessor)
+                        new_accessor = None
+                    except BaseException:
+                        pass
+            human_token = None
+
+    if operation_error is not None or revocation_error is not None:
+        try:
+            _rollback_local_transaction(
+                credential_paths,
+                staging,
+                installed_new_credentials=installed_new_credentials,
+                legacy_moved=legacy_moved,
+            )
+        except BaseException as rollback_error:
+            raise ProvisioningError(
+                "Provisioning failed and the local rollback requires operator recovery."
+            ) from rollback_error
+        if isinstance(operation_error, (EOFError, KeyboardInterrupt)):
+            raise operation_error
+        if isinstance(operation_error, ProvisioningError):
+            raise operation_error
+        if revocation_error is not None:
+            raise ProvisioningError(
+                "The human OpenBao token revocation could not be confirmed; local changes were rolled back."
+            )
+        raise ProvisioningError("Memory OpenBao provisioning failed.") from operation_error
+
+    # The privileged token is confirmed revoked.  Removing this transaction
+    # directory is the commit that erases the legacy encrypted key blob.
+    if staging is not None:
+        _cleanup_staging(staging)
+    else:
+        _fsync_directory(CREDSTORE)
+    new_accessor = None
+
+
+def main() -> int:
+    try:
+        provision()
+    except (EOFError, KeyboardInterrupt):
+        print("provision-memory-openbao: cancelled", file=sys.stderr)
+        return 130
+    except ProvisioningError as exc:
+        print(f"provision-memory-openbao: {exc}", file=sys.stderr)
+        return 1
+    print("Qdrant key centralized in OpenBao; no secret value was displayed.")
+    print("Only the host+TPM2 encrypted memory RoleID and SecretID persist locally.")
+    print("Ops memory services remain stopped and were not started.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

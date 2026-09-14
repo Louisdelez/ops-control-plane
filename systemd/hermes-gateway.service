@@ -1,0 +1,97 @@
+[Unit]
+Description=Hermes operations gateway (dormant until explicitly activated)
+Documentation=https://github.com/NousResearch/hermes-agent
+After=network-online.target openbao.service ops-orchestrator.service ops-orchestrator-hermes-facade.service ops-memory.service
+Wants=network-online.target
+Requisite=openbao.service
+Requires=ops-orchestrator.service ops-orchestrator-hermes-facade.service ops-memory.service
+Conflicts=ollama.service
+ConditionPathExists=/etc/hermes/hermes-gateway.enabled
+ConditionPathExists=/usr/local/libexec/hermes-secrets-env
+ConditionPathExists=/usr/local/libexec/ops-broker-mcp-profile
+ConditionPathExists=/usr/local/libexec/ops-orchestrator-mcp-profile
+ConditionPathExists=/usr/local/libexec/ops-memory-mcp-profile
+ConditionPathExists=/etc/openbao.d/tls/ca.crt
+ConditionPathExists=/etc/credstore.encrypted/hermes-openbao-role-id
+ConditionPathExists=/etc/credstore.encrypted/hermes-openbao-secret-id
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=hermesd
+Group=hermesd
+SupplementaryGroups=opsorchestrator-api ops-memory-api
+WorkingDirectory=/var/lib/hermes
+ExecCondition=/usr/bin/bash /usr/local/libexec/hermes-gateway-preflight
+ExecStart=/var/lib/hermes/hermes-agent/venv/bin/python -m hermes_cli.main gateway run
+ExecReload=/bin/kill -USR1 $MAINPID
+ExecStopPost=-/var/lib/hermes/hermes-agent/venv/bin/python -m gateway.cgroup_cleanup
+Restart=always
+RestartSec=15
+RestartForceExitStatus=75
+RestartPreventExitStatus=78
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=120
+
+Environment=HOME=/var/lib/hermes
+Environment=USER=hermesd
+Environment=LOGNAME=hermesd
+Environment=HERMES_HOME=/var/lib/hermes
+Environment=HERMES_SUPERVISED_CHILD=1
+Environment=BAO_ADDR=https://127.0.0.1:8200
+Environment=BAO_CACERT=/etc/openbao.d/tls/ca.crt
+Environment=PATH=/var/lib/hermes/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=VIRTUAL_ENV=/var/lib/hermes/hermes-agent/venv
+
+LoadCredentialEncrypted=hermes-openbao-role-id:/etc/credstore.encrypted/hermes-openbao-role-id
+LoadCredentialEncrypted=hermes-openbao-secret-id:/etc/credstore.encrypted/hermes-openbao-secret-id
+
+UMask=0077
+RuntimeDirectory=hermes
+RuntimeDirectoryMode=0700
+LimitCORE=0
+LimitNOFILE=4096
+TasksMax=256
+MemoryHigh=5G
+MemoryMax=6G
+MemorySwapMax=0
+OOMPolicy=stop
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+LockPersonality=yes
+SystemCallArchitectures=native
+KeyringMode=private
+RemoveIPC=yes
+
+# Narrow sudo transitions bind each multiplex profile to its broker, model
+# router and memory identities. No generic RunAs command is granted.
+NoNewPrivileges=no
+RestrictSUIDSGID=no
+ReadWritePaths=/var/lib/hermes /var/lib/ops-broker /run/hermes
+ReadOnlyPaths=/var/lib/hermes/hermes-agent
+ReadOnlyPaths=/var/lib/hermes/config.yaml /var/lib/hermes/SOUL.md /var/lib/hermes/skills
+ReadOnlyPaths=/var/lib/hermes/profiles/minecraft-ops/config.yaml /var/lib/hermes/profiles/minecraft-ops/SOUL.md /var/lib/hermes/profiles/minecraft-ops/skills
+ReadOnlyPaths=/var/lib/hermes/profiles/infra-shared/config.yaml /var/lib/hermes/profiles/infra-shared/SOUL.md /var/lib/hermes/profiles/infra-shared/skills
+ReadOnlyPaths=/var/lib/hermes/profiles/network-shared/config.yaml /var/lib/hermes/profiles/network-shared/SOUL.md /var/lib/hermes/profiles/network-shared/skills
+ReadOnlyPaths=/var/lib/hermes/profiles/monitoring-shared/config.yaml /var/lib/hermes/profiles/monitoring-shared/SOUL.md /var/lib/hermes/profiles/monitoring-shared/skills
+ReadOnlyPaths=/var/lib/hermes/profiles/backup-shared/config.yaml /var/lib/hermes/profiles/backup-shared/SOUL.md /var/lib/hermes/profiles/backup-shared/skills
+ReadOnlyPaths=/var/lib/hermes/profiles/deploy-ops/config.yaml /var/lib/hermes/profiles/deploy-ops/SOUL.md /var/lib/hermes/profiles/deploy-ops/skills
+ReadOnlyPaths=/var/lib/hermes/profiles/security-ops/config.yaml /var/lib/hermes/profiles/security-ops/SOUL.md /var/lib/hermes/profiles/security-ops/skills
+
+[Install]
+WantedBy=multi-user.target

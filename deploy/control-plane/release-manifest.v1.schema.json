@@ -1,0 +1,964 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ops.local/schemas/control-plane-release-manifest.v1.schema.json",
+  "title": "Local control-plane release manifest V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "release_id",
+    "architecture",
+    "trust_anchor",
+    "bootstrap",
+    "supply_chain",
+    "host",
+    "cutover",
+    "source",
+    "artifacts",
+    "components",
+    "runtime",
+    "rollback"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "release_id": {
+      "const": "atlas-api-zulip-2026.09.09.29"
+    },
+    "architecture": {
+      "const": "x86_64"
+    },
+    "trust_anchor": {
+      "const": {
+        "version_directory": "/usr/local/lib/ops-control-plane/atlas-api-zulip-2026.09.08.11",
+        "manifest_path": "/usr/local/lib/ops-control-plane/atlas-api-zulip-2026.09.08.11/release-manifest.v1.json",
+        "bootstrap_helper_path": "/usr/local/lib/ops-control-plane/atlas-api-zulip-2026.09.08.11/control-plane-bootstrap",
+        "launcher_path": "/usr/local/lib/ops-control-plane/atlas-api-zulip-2026.09.08.11/launch-atlas-reviewed-rpm",
+        "manifest_mode": "0444",
+        "bootstrap_helper_mode": "0555",
+        "launcher_mode": "0555",
+        "launcher_sha256": "0975899d89952ceca5d921af36358175f26b0ca9719770025da1398081af48bf",
+        "enrollment": "physical-polkit-tofu-v1"
+      }
+    },
+    "bootstrap": {
+      "const": {
+        "mode": "one-shot-local-physical",
+        "actor": "codex-supervised",
+        "helper_sha256": "3d4d3363984647cef9a6472ffce510bc5b6a5723020d809f4a4231b4d131aa01",
+        "allowed_when": "zulip-absent",
+        "consumed_marker": "/var/lib/ops-control-plane-bootstrap.consumed.json",
+        "state_root": "/var/lib/ops-control-plane-bootstrap",
+        "approver_state": "/var/lib/ops-control-plane-bootstrap/zulip-approver.json",
+        "recovery_units": [
+          "ops-control-plane-bootstrap-guard.service",
+          "ops-control-plane-bootstrap-recovery.service",
+          "ops-control-plane-bootstrap-recovery-activate.service"
+        ],
+        "requires_provider_keys": false,
+        "rollback_keeps_recovered_userpass": true,
+        "gui_protocol": {
+          "schema_version": 1,
+          "public_operations": [
+            "gui-preflight",
+            "gui-apply",
+            "gui-corrective-preflight",
+            "gui-corrective-apply",
+            "gui-recovery-preflight",
+            "gui-recovery-apply"
+          ],
+          "apply_magic": "ATLASBOOT1",
+          "control_magic": "ATLASCTL1",
+          "stdout": "bounded-jsonl",
+          "atlas_ancestry_required": true,
+          "launcher_mode": "sealed-rpm-payload-memfd",
+          "atlas_payload_member": "/usr/bin/ops-model-manager",
+          "atlas_payload_sha256": "6f86f7d1bf146f3352128024e0795544d23932a7705d6fa60060d574b2c7fd85",
+          "anonymous_pipes_required": true,
+          "mutation_boundary_event": "mutation-started",
+          "secrets_outside_process_memory": false
+        },
+        "openbao": {
+          "version": "2.6.2",
+          "address": "https://127.0.0.1:8200",
+          "listener_config": "/etc/openbao.d/openbao.hcl",
+          "listener_source_sha256": "fa35302f0917bfe0cb0a71e5926e0832b59a468cba2d0ceb967a93e3067fe034",
+          "recovery_credentials": [
+            "openbao-unseal-share-1",
+            "openbao-unseal-share-2"
+          ],
+          "tcp_legacy_endpoint_disabled": true,
+          "temporary_unix_socket": "/var/lib/openbao/ops-control-plane-bootstrap.sock",
+          "temporary_unix_listener_sha256": "bb5d13d1ce055fce8855a06cf750ab5515392c926cc7e289a3053cff147060d1",
+          "root_token_escrow": "/var/lib/ops-control-plane-bootstrap/root-token.cred",
+          "undo_escrow": "/var/lib/ops-control-plane-bootstrap/openbao-undo.cred",
+          "userpass_password_escrow": "/var/lib/ops-control-plane-bootstrap/userpass-password.cred",
+          "exclusive_local_maintenance": true,
+          "root_generation_max_remints": 1,
+          "root_generation_window_seconds": 10
+        },
+        "corrective": {
+          "mode": "single-terminal-rollback-repair",
+          "max_attempts": 1,
+          "consumed_marker": "/var/lib/ops-control-plane-bootstrap-corrective.consumed.json",
+          "state_root": "/var/lib/ops-control-plane-bootstrap-corrective",
+          "history_root": "/var/lib/ops-control-plane-bootstrap-history",
+          "recovery_helper": "/usr/local/libexec/ops-control-plane-bootstrap-corrective",
+          "recovery_unit": "ops-control-plane-bootstrap-corrective-recovery.service",
+          "recovery_path_unit": "ops-control-plane-bootstrap-corrective-recovery.path",
+          "authority_document": "AGENTS.md",
+          "recovery_from_release_id": "atlas-api-zulip-2026.09.08.10",
+          "recovery_from_source_tree_sha256": "3ede12c444991f12c81359963cfde50bc01d757fba8bf512a56f610a095f40ef",
+          "recovery_from_atlas_rpm_sha256": "a571034b4902e951d8af2754eb904be6fe68d0a582f006d34a6b694f77cad32f",
+          "recovery_from_bootstrap_helper_sha256": "93561352ce9684ce2eb3a1cc8a9abb13375d31073c5b6a515b716cb2e1c3a9d0",
+          "recovery_from_manifest_sha256": "96f137109ea240264f53e994e4e0179c9dbb90db485c595cd34bbf6a692214d2"
+        }
+      }
+    },
+    "supply_chain": {
+      "const": {
+        "network_required": true,
+        "byte_for_byte_reproducible": false,
+        "python_binary_only": true,
+        "python_no_deps": true,
+        "python_artifact_hashes_present": false,
+        "python_closures": {
+          "orchestrator": {
+            "path": "orchestrator/requirements-runtime.lock",
+            "sha256": "ef5bc46ffd092e466ed60e653990cc65c8062f5edc086b543b1879af2f27afd7",
+            "distributions": 29
+          },
+          "broker": {
+            "path": "broker/requirements-mcp.txt",
+            "sha256": "c7866b7b58d9e455647369f95c72a695e209943ff8e34e4ff4ec6fec538dd234",
+            "distributions": 32
+          }
+        },
+        "atlas": {
+          "exit_code": 0,
+          "known_blocking_vulnerabilities": 0,
+          "warnings": 7,
+          "unmaintained_transitive_crates": 6,
+          "advisories": [
+            {
+              "id": "RUSTSEC-2024-0429",
+              "crate": "glib",
+              "version": "0.18.5",
+              "classification": "unsound-transitive"
+            }
+          ]
+        },
+        "hermes": {
+          "uv_version": "0.12.0",
+          "uv_lock_from_pinned_commit": true,
+          "locked_sync": true,
+          "bootstrap_script_pinned": false,
+          "source_archive_vendored": true,
+          "network_git_transport": false
+        }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "docker"
+      ],
+      "properties": {
+        "os": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "version_id",
+            "architecture"
+          ],
+          "properties": {
+            "id": {
+              "const": "fedora"
+            },
+            "version_id": {
+              "const": "44"
+            },
+            "architecture": {
+              "const": "x86_64"
+            }
+          }
+        },
+        "docker": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "initial_state",
+            "in_place_upgrade_supported",
+            "rollback_preserves_named_volumes",
+            "rollback_named_volumes_root",
+            "service",
+            "units",
+            "preinstalled_dependencies",
+            "daemon_config",
+            "network",
+            "repositories",
+            "install_weak_dependencies",
+            "packages",
+            "dependencies"
+          ],
+          "properties": {
+            "mode": {
+              "const": "rootful"
+            },
+            "initial_state": {
+              "const": "absent"
+            },
+            "in_place_upgrade_supported": {
+              "const": false
+            },
+            "rollback_preserves_named_volumes": {
+              "const": true
+            },
+            "rollback_named_volumes_root": {
+              "const": "/var/backups/zulip-local"
+            },
+            "service": {
+              "const": "docker.service"
+            },
+            "units": {
+              "const": [
+                "containerd.service",
+                "docker.socket",
+                "docker.service"
+              ]
+            },
+            "preinstalled_dependencies": {
+              "const": [
+                "container-selinux",
+                "iptables-nft",
+                "nftables"
+              ]
+            },
+            "daemon_config": {
+              "const": {
+                "bridge": "none",
+                "firewall-backend": "iptables",
+                "ip-forward": false,
+                "ip-masq": false,
+                "ip6tables": false,
+                "iptables": true,
+                "userland-proxy": true
+              }
+            },
+            "network": {
+              "const": {
+                "firewalld_required": true,
+                "fixed_networks": {
+                  "zulip-local_backend": {
+                    "bridge_name": "zulip-backend",
+                    "compose_network": "backend",
+                    "internal": true,
+                    "masquerade": false,
+                    "subnet": "172.30.10.0/24"
+                  },
+                  "zulip-local_frontend": {
+                    "bridge_name": "zulip-frontend",
+                    "compose_network": "frontend",
+                    "internal": false,
+                    "masquerade": false,
+                    "subnet": "172.30.11.0/24"
+                  }
+                },
+                "ipv4_forwarding_required": true,
+                "ipv6_forwarding_required": false
+              }
+            },
+            "repositories": {
+              "const": [
+                "fedora",
+                "updates"
+              ]
+            },
+            "install_weak_dependencies": {
+              "const": false
+            },
+            "packages": {
+              "const": {
+                "moby-engine": "moby-engine-0:29.7.2-1.fc44.x86_64",
+                "docker-cli": "docker-cli-0:29.7.2-1.fc44.x86_64",
+                "docker-compose": "docker-compose-0:5.5.0-1.fc44.x86_64"
+              }
+            },
+            "dependencies": {
+              "const": {
+                "pigz": "pigz-0:2.8-8.fc44.x86_64",
+                "moby-filesystem": "moby-filesystem-0:29.7.2-1.fc44.noarch",
+                "container-selinux": "container-selinux-4:2.250.0-1.fc44.noarch",
+                "containerd": "containerd-0:2.3.4-1.fc44.x86_64",
+                "nftables": "nftables-1:1.1.6-2.fc44.x86_64",
+                "iptables-libs": "iptables-libs-0:1.8.11-13.fc44.x86_64",
+                "libmnl": "libmnl-0:1.0.5-9.fc44.x86_64",
+                "libnftnl": "libnftnl-0:1.3.1-2.fc44.x86_64",
+                "nftables-services": "nftables-services-1:1.1.6-2.fc44.noarch",
+                "libnetfilter_conntrack": "libnetfilter_conntrack-0:1.1.1-1.fc44.x86_64",
+                "libnfnetlink": "libnfnetlink-0:1.0.1-32.fc44.x86_64",
+                "tini-static": "tini-static-0:0.19.0-12.fc44.x86_64",
+                "runc": "runc-2:1.5.1-1.fc44.x86_64",
+                "iptables-nft": "iptables-nft-0:1.8.11-13.fc44.x86_64",
+                "selinux-policy": "selinux-policy-0:44.8-1.fc44.noarch",
+                "libseccomp": "libseccomp-0:2.6.1-2.fc44.x86_64",
+                "systemd": "systemd-0:259.8-1.fc44.x86_64",
+                "systemd-shared": "systemd-shared-0:259.8-1.fc44.x86_64",
+                "jansson": "jansson-0:2.14-4.fc44.x86_64",
+                "libselinux-utils": "libselinux-utils-0:3.11-1.fc44.x86_64",
+                "policycoreutils": "policycoreutils-0:3.11-2.fc44.x86_64",
+                "diffutils": "diffutils-0:3.12-5.fc44.x86_64",
+                "selinux-policy-targeted": "selinux-policy-targeted-0:44.8-1.fc44.noarch",
+                "libedit": "libedit-0:3.1-59.20260512cvs.fc44.x86_64",
+                "cryptsetup-libs": "cryptsetup-libs-0:2.8.7-1.fc44.x86_64",
+                "device-mapper-libs": "device-mapper-libs-0:1.02.212-2.fc44.x86_64",
+                "device-mapper": "device-mapper-0:1.02.212-2.fc44.x86_64",
+                "libfdisk": "libfdisk-0:2.41.5-1.fc44.x86_64",
+                "util-linux": "util-linux-0:2.41.5-1.fc44.x86_64",
+                "liblastlog2": "liblastlog2-0:2.41.5-1.fc44.x86_64",
+                "rpm-plugin-selinux": "rpm-plugin-selinux-0:6.0.2-1.fc44.x86_64"
+              }
+            }
+          }
+        }
+      }
+    },
+    "cutover": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "local_inference"
+      ],
+      "properties": {
+        "local_inference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "units",
+            "preserve_historical_artifacts"
+          ],
+          "properties": {
+            "mode": {
+              "const": "disabled"
+            },
+            "units": {
+              "const": [
+                "ollama.service"
+              ]
+            },
+            "preserve_historical_artifacts": {
+              "const": true
+            }
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "roots",
+        "tree_algorithm",
+        "tree_sha256"
+      ],
+      "properties": {
+        "root": {
+          "const": "/home/ops-user/ops-control-plane"
+        },
+        "roots": {
+          "const": [
+            "AGENTS.md",
+            "README.md",
+            "apps/model-manager",
+            "bridges/zulip",
+            "broker",
+            "broker/config/executables.yaml",
+            "broker/config/rbac.yaml",
+            "broker/deploy/helpers/control-plane-deployment",
+            "broker/deploy/sudoers/ops-broker-control-plane-deployment",
+            "broker/requirements-mcp.txt",
+            "catalog",
+            "config/hermes",
+            "config/ollama/selection.json",
+            "config/openbao",
+            "deploy/control-plane/README.md",
+            "deploy/control-plane/bin/control-plane-bootstrap",
+            "deploy/control-plane/bin/control-plane-deployment-worker",
+            "deploy/control-plane/ops-control-plane-deployment.tmpfiles",
+            "deploy/control-plane/release-manifest.v1.schema.json",
+            "deploy/control-plane/systemd",
+            "deploy/zulip-local",
+            "docs",
+            "memory/config/memory.toml",
+            "memory/deploy",
+            "memory/src/ops_memory/mcp_server.py",
+            "orchestrator",
+            "policies",
+            "provider-discovery",
+            "runbooks",
+            "runbooks/local/control-plane-deployment-status.yaml",
+            "scripts",
+            "systemd"
+          ]
+        },
+        "tree_algorithm": {
+          "const": "sha256-tree-v1"
+        },
+        "tree_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "atlas_rpm",
+        "hermes_source_archive"
+      ],
+      "properties": {
+        "hermes_source_archive": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_path",
+            "sha256",
+            "format",
+            "commit",
+            "git_tree_oid",
+            "canonical_tree_sha256",
+            "top_level_directory",
+            "compressed_size",
+            "expanded_size",
+            "members",
+            "regular_files",
+            "directories",
+            "max_file_size"
+          ],
+          "properties": {
+            "source_path": {
+              "const": "/home/ops-user/T\u00e9l\u00e9chargements/Hermes-agent-v2026.8.31-29112bef.tar.gz"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "format": {
+              "const": "github-codeload-tar-gzip-v1"
+            },
+            "commit": {
+              "const": "29112bef099274229cadff79cdff7bf7b99c4b77"
+            },
+            "git_tree_oid": {
+              "const": "daaffc303ae437041b7f76be17c5f61b14f2ce99"
+            },
+            "canonical_tree_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "top_level_directory": {
+              "const": "hermes-agent-29112bef099274229cadff79cdff7bf7b99c4b77"
+            },
+            "compressed_size": {
+              "const": 69442866
+            },
+            "expanded_size": {
+              "const": 167028103
+            },
+            "members": {
+              "const": 11994
+            },
+            "regular_files": {
+              "const": 10925
+            },
+            "directories": {
+              "const": 1069
+            },
+            "max_file_size": {
+              "const": 3871968
+            }
+          }
+        },
+        "atlas_rpm": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_path",
+            "sha256",
+            "payload_executable_path",
+            "payload_executable_sha256",
+            "name",
+            "initial_state",
+            "signed",
+            "version",
+            "release",
+            "architecture"
+          ],
+          "properties": {
+            "source_path": {
+              "type": "string",
+              "const": "/home/ops-user/T\u00e9l\u00e9chargements/Atlas-modeles-IA-0.1.0-1.x86_64.rpm"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "payload_executable_path": {
+              "const": "/usr/bin/ops-model-manager"
+            },
+            "payload_executable_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "name": {
+              "const": "modeles-ia"
+            },
+            "initial_state": {
+              "const": "absent"
+            },
+            "signed": {
+              "const": false
+            },
+            "version": {
+              "$ref": "#/$defs/version"
+            },
+            "release": {
+              "$ref": "#/$defs/version"
+            },
+            "architecture": {
+              "const": "x86_64"
+            }
+          }
+        }
+      }
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "atlas",
+        "orchestrator",
+        "hermes",
+        "zulip_bridge",
+        "zulip",
+        "model_catalogue",
+        "provider_integrations"
+      ],
+      "properties": {
+        "atlas": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "mode"
+          ],
+          "properties": {
+            "version": {
+              "$ref": "#/$defs/version"
+            },
+            "mode": {
+              "const": "desktop-local"
+            }
+          }
+        },
+        "orchestrator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "mode"
+          ],
+          "properties": {
+            "version": {
+              "$ref": "#/$defs/version"
+            },
+            "mode": {
+              "const": "api-first"
+            }
+          }
+        },
+        "hermes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "tag",
+            "commit"
+          ],
+          "properties": {
+            "version": {
+              "$ref": "#/$defs/version"
+            },
+            "tag": {
+              "$ref": "#/$defs/version"
+            },
+            "commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          }
+        },
+        "zulip_bridge": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "mode"
+          ],
+          "properties": {
+            "version": {
+              "$ref": "#/$defs/version"
+            },
+            "mode": {
+              "const": "local-only"
+            }
+          }
+        },
+        "zulip": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "origin",
+            "images"
+          ],
+          "properties": {
+            "version": {
+              "$ref": "#/$defs/version"
+            },
+            "origin": {
+              "const": "https://zulip.ops.local:8443"
+            },
+            "images": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "zulip",
+                "postgresql",
+                "memcached",
+                "rabbitmq",
+                "redis"
+              ],
+              "properties": {
+                "zulip": {
+                  "$ref": "#/$defs/sha256"
+                },
+                "postgresql": {
+                  "$ref": "#/$defs/sha256"
+                },
+                "memcached": {
+                  "$ref": "#/$defs/sha256"
+                },
+                "rabbitmq": {
+                  "$ref": "#/$defs/sha256"
+                },
+                "redis": {
+                  "$ref": "#/$defs/sha256"
+                }
+              }
+            }
+          }
+        },
+        "model_catalogue": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "revision",
+            "sha256",
+            "cards",
+            "provider_accounts",
+            "runtime"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": 2
+            },
+            "revision": {
+              "$ref": "#/$defs/identifier"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "cards": {
+              "$ref": "#/$defs/positiveCount"
+            },
+            "provider_accounts": {
+              "$ref": "#/$defs/positiveCount"
+            },
+            "runtime": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "static_cards",
+                "static_deployments",
+                "dynamic_cards",
+                "invocable_cards",
+                "blocked_cards",
+                "provider_deployments",
+                "provider_inventory_sha256",
+                "blocked_reasons"
+              ],
+              "properties": {
+                "static_cards": {
+                  "$ref": "#/$defs/nonnegativeCount"
+                },
+                "static_deployments": {
+                  "$ref": "#/$defs/nonnegativeCount"
+                },
+                "dynamic_cards": {
+                  "$ref": "#/$defs/nonnegativeCount"
+                },
+                "invocable_cards": {
+                  "$ref": "#/$defs/nonnegativeCount"
+                },
+                "blocked_cards": {
+                  "$ref": "#/$defs/nonnegativeCount"
+                },
+                "provider_deployments": {
+                  "$ref": "#/$defs/positiveCount"
+                },
+                "provider_inventory_sha256": {
+                  "$ref": "#/$defs/sha256"
+                },
+                "blocked_reasons": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "token_prices_not_officially_verified",
+                    "quarantined",
+                    "exact_model_id_unverified",
+                    "minimax_m3_chat_api_contract_unverified"
+                  ],
+                  "properties": {
+                    "token_prices_not_officially_verified": {
+                      "$ref": "#/$defs/positiveCount"
+                    },
+                    "quarantined": {
+                      "$ref": "#/$defs/positiveCount"
+                    },
+                    "exact_model_id_unverified": {
+                      "$ref": "#/$defs/positiveCount"
+                    },
+                    "minimax_m3_chat_api_contract_unverified": {
+                      "$ref": "#/$defs/positiveCount"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "provider_integrations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "revision",
+            "sha256",
+            "provider_accounts"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "revision": {
+              "$ref": "#/$defs/identifier"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "provider_accounts": {
+              "$ref": "#/$defs/positiveCount"
+            }
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "encrypted_credentials",
+        "zulip_owner_password_file",
+        "finance_isolation",
+        "provider_credential_scopes",
+        "provider_optional_credential_scopes",
+        "dynamic_services",
+        "services"
+      ],
+      "properties": {
+        "encrypted_credentials": {
+          "const": [
+            "ops-orchestrator-openbao-role-id",
+            "ops-orchestrator-openbao-secret-id",
+            "hermes-openbao-role-id",
+            "hermes-openbao-secret-id",
+            "hermes-openbao-secret-id-accessor",
+            "zulip-local-runtime-role-id",
+            "zulip-local-runtime-secret-id",
+            "zulip-local-runtime-secret-id-accessor",
+            "zulip-local-bootstrap-role-id",
+            "zulip-local-bootstrap-secret-id",
+            "zulip-local-bootstrap-secret-id-accessor",
+            "zulip-openbao-role-id",
+            "zulip-openbao-secret-id",
+            "zulip-openbao-secret-id-accessor"
+          ]
+        },
+        "zulip_owner_password_file": {
+          "const": "/run/ops-control-plane-deployment/zulip-owner-password"
+        },
+        "finance_isolation": {
+          "const": {
+            "worker_user": "opsfinance",
+            "worker_group": "opsfinance",
+            "client_user": "opsorchestrator",
+            "socket_path": "/run/ops-orchestrator-finance/api.sock",
+            "socket_mode": "0660",
+            "stateless": true
+          }
+        },
+        "provider_credential_scopes": {
+          "const": {
+            "ops-orchestrator.service": [
+              "qwen-api-key",
+              "deepseek-api-key",
+              "z-ai-api-key",
+              "mistral-ai-api-key",
+              "minimax-api-key",
+              "google-api-key",
+              "cohere-api-key",
+              "moonshot-api-key",
+              "tencent-api-key",
+              "xai-api-key",
+              "openai-api-key",
+              "anthropic-api-key"
+            ],
+            "ops-orchestrator-provider-finance-daemon.service": [
+              "deepseek-api-key",
+              "moonshot-api-key",
+              "stepfun-api-key"
+            ],
+            "ops-orchestrator-provider-finance.service": [],
+            "ops-orchestrator-hermes-facade.service": [
+              "qwen-api-key",
+              "deepseek-api-key",
+              "hermes-facade-token"
+            ]
+          }
+        },
+        "provider_optional_credential_scopes": {
+          "const": {
+            "ops-orchestrator.service": [
+              "qwen-api-key",
+              "deepseek-api-key",
+              "z-ai-api-key",
+              "mistral-ai-api-key",
+              "minimax-api-key",
+              "google-api-key",
+              "cohere-api-key",
+              "moonshot-api-key",
+              "tencent-api-key",
+              "xai-api-key",
+              "openai-api-key",
+              "anthropic-api-key"
+            ],
+            "ops-orchestrator-provider-finance-daemon.service": [
+              "deepseek-api-key",
+              "moonshot-api-key",
+              "stepfun-api-key"
+            ],
+            "ops-orchestrator-provider-finance.service": [],
+            "ops-orchestrator-hermes-facade.service": [
+              "qwen-api-key",
+              "deepseek-api-key"
+            ]
+          }
+        },
+        "dynamic_services": {
+          "const": [
+            "zulip-alertmanager-query.service"
+          ]
+        },
+        "services": {
+          "const": [
+            "ops-orchestrator-secrets.service",
+            "ops-orchestrator-provider-finance-daemon.service",
+            "ops-orchestrator.service",
+            "ops-orchestrator-hermes-facade.service",
+            "ops-orchestrator-metrics.timer",
+            "ops-orchestrator-provider-finance.timer",
+            "hermes-gateway.service",
+            "zulip-local-secrets.service",
+            "zulip-local.service",
+            "zulip-local-health.timer",
+            "zulip-local-backup.timer",
+            "zulip-alertmanager-query.socket",
+            "zulip-approval-bridge.service",
+            "ops-broker-audit-verify.timer",
+            "ops-broker-backup.timer",
+            "ops-broker-audit-verify.service",
+            "ops-broker-backup.service",
+            "ops-broker-backup-metric-success.service",
+            "ops-broker-backup-metric-failure.service",
+            "zulip-local-health.service",
+            "zulip-local-backup.service",
+            "zulip-alertmanager-query.service"
+          ]
+        }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automatic_on_failure",
+        "explicit_last_transaction",
+        "zulip_restore_identity_file",
+        "secret_material_backed_up"
+      ],
+      "properties": {
+        "automatic_on_failure": {
+          "const": true
+        },
+        "explicit_last_transaction": {
+          "const": false
+        },
+        "zulip_restore_identity_file": {
+          "const": "/run/ops-control-plane-deployment/zulip-restore-identity"
+        },
+        "secret_material_backed_up": {
+          "const": false
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{1,127}$"
+    },
+    "nonnegativeCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "positiveCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+:~_-]{0,127}$"
+    }
+  }
+}

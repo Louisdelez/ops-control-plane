@@ -1,0 +1,9 @@
+*.age
+*.sha256
+*.log
+.env
+secrets/
+runtime/
+backup/
+__pycache__/
+*.py[cod]

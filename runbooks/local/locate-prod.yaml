@@ -1,0 +1,15 @@
+id: inventory.locate-prod.v1
+version: 1
+project: infra-shared
+action_class: A
+description: Rechercher uniquement la clé d’hôte SSH connue de prod sur le LAN fixe 192.0.2.0/24, sans authentification ni modification distante
+timeout_seconds: 50
+command:
+  argv:
+    - /usr/bin/sudo
+    - -n
+    - /usr/local/libexec/ops-runbooks/locate-prod
+parameters: {}
+output:
+  max_bytes: 4096
+  redact: true

@@ -1,0 +1,15 @@
+[Unit]
+Description=Private SSH return path from Dell Zulip to NAS
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+[Service]
+ExecStart=/usr/bin/ssh -F /etc/ops-zulip-public/ssh.conf -NT -o ExitOnForwardFailure=yes -R 127.0.0.1:17443:127.0.0.1:8443 ops-zulip-nas
+Restart=always
+RestartSec=15
+NoNewPrivileges=yes
+LimitCORE=0
+MemoryMax=128M
+TasksMax=32
+[Install]
+WantedBy=default.target

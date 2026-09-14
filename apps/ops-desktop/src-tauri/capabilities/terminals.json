@@ -1,0 +1,17 @@
+{
+  "identifier": "terminals",
+  "description": "Local PTY sessions only",
+  "webviews": [
+    "terminals"
+  ],
+  "local": true,
+  "permissions": [
+    "allow-terminal-start",
+    "allow-terminal-poll",
+    "allow-terminal-write",
+    "allow-terminal-resize",
+    "allow-terminal-close",
+    "allow-execution-status",
+    "allow-execution-mode"
+  ]
+}

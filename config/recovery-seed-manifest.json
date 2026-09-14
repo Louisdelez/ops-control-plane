@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "files": {
+    "openbao-snapshot.age": "4f47f0a359bad1a6bb5cdb534619519873993a9857e9f8e7624135cf038b803f",
+    "unseal-shares.age": "ac17bf07f42d9487b73ad6257daca76d06ffb9486964fd612830d6a940532423",
+    "zulip-bundle.age": "2ef52da649f8cbb0f686a62345681fa4ee30c75eba4f19b3ba219004141305c8"
+  }
+}

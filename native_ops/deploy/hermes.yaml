@@ -1,0 +1,43 @@
+_config_version: 42
+model:
+  provider: custom:ops-native
+  default: qwen-coordinator
+  context_length: 64000
+  api_mode: chat_completions
+providers:
+  ops-native:
+    api: http://127.0.0.1:18643/v1
+    key_env: OPS_NATIVE_FACADE_TOKEN
+    extra_headers:
+      X-Ops-Mission-ID: "${OPS_NATIVE_MISSION_ID}"
+      X-Ops-Reasoning: "${OPS_NATIVE_REASONING}"
+    transport: chat_completions
+    default_model: qwen-coordinator
+    discover_models: false
+    models:
+      qwen-coordinator: {context_length: 64000}
+agent:
+  max_turns: 3
+  reasoning_effort: none
+  disabled_toolsets: [terminal, file, code_execution, delegation, browser, computer_use, cronjob, web, kanban, memory, session_search, skills, todo]
+plugins: {enabled: []}
+skills: {external_dirs: [], project_discovery: false, inline_shell: false, guard_agent_created: true}
+curator: {enabled: false}
+mcp_servers:
+  ops-native:
+    command: /opt/ops-native/venv/bin/ops-native-tools
+    env:
+      OPS_NATIVE_MISSION_ID: '${OPS_NATIVE_MISSION_ID}'
+    trust: untrusted
+    tools:
+      include: [get_mission_operations, search_mission_memory, get_service_health, request_mission_action, get_mission_action, execute_approved_mission_action]
+      resources: false
+      prompts: false
+    sampling: {enabled: false}
+    elicitation: {enabled: false}
+platform_toolsets:
+  cli: [ops-native]
+# One small observation schema: expose it directly using the documented setting.
+tools:
+  tool_search:
+    enabled: false

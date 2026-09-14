@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "id": "detailed-reports",
+      "enabled": false,
+      "root": "/var/lib/ops-v1/reports",
+      "pattern": "*.json",
+      "retain_days": 90,
+      "action": "quarantine",
+      "quarantine_root": "/var/lib/ops-v1/quarantine/reports",
+      "exclude": ["latest.json"]
+    },
+    {
+      "id": "check-results",
+      "enabled": false,
+      "root": "/var/lib/ops-v1/checks",
+      "pattern": "*.json",
+      "retain_days": 30,
+      "action": "quarantine",
+      "quarantine_root": "/var/lib/ops-v1/quarantine/checks",
+      "exclude": ["latest.json"]
+    }
+  ]
+}
