@@ -2,3 +2,7 @@ opsbroker ALL=(root) NOPASSWD: /usr/local/libexec/ops-runbooks/enable-logstream 
 opsbroker ALL=(root) NOPASSWD: /usr/local/libexec/ops-runbooks/enable-logstream prod 4516ad2ab4a537b5620e528d671f9b587528f79446e3ad4506bad8a782c86a24
 opsbroker ALL=(root) NOPASSWD: /usr/local/libexec/ops-runbooks/enable-logstream nas 4516ad2ab4a537b5620e528d671f9b587528f79446e3ad4506bad8a782c86a24
 opsbroker ALL=(root) NOPASSWD: /usr/local/libexec/ops-runbooks/enable-logstream gamebox 4516ad2ab4a537b5620e528d671f9b587528f79446e3ad4506bad8a782c86a24
+opsbroker ALL=(root) NOPASSWD: /usr/local/libexec/ops-runbooks/enable-logstream edge-vps 71e1061ab888119ccb0149bda359fe0edc551be72346a5aff2e3b9925bcf1ad2
+opsbroker ALL=(root) NOPASSWD: /usr/local/libexec/ops-runbooks/enable-logstream prod 71e1061ab888119ccb0149bda359fe0edc551be72346a5aff2e3b9925bcf1ad2
+opsbroker ALL=(root) NOPASSWD: /usr/local/libexec/ops-runbooks/enable-logstream nas 71e1061ab888119ccb0149bda359fe0edc551be72346a5aff2e3b9925bcf1ad2
+opsbroker ALL=(root) NOPASSWD: /usr/local/libexec/ops-runbooks/enable-logstream gamebox 71e1061ab888119ccb0149bda359fe0edc551be72346a5aff2e3b9925bcf1ad2

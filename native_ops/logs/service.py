@@ -4,11 +4,25 @@ from pathlib import Path
 HOSTS={'dell-control','nas','prod','edge-vps','gamebox'}
 BASE=Path('/usr/local/libexec/ops-logs');SOURCE=(BASE/'collector.py').read_text();STATE=Path('/var/lib/ops-telemetry')
 LIMIT=1024*1024
+STREAM_V2_BUNDLE='71e1061ab888119ccb0149bda359fe0edc551be72346a5aff2e3b9925bcf1ad2'
+BROKER_DATABASE=Path('/var/lib/ops-broker/state.db')
+
+def stream_collector(host):
+ if not (BASE/'stream-collector-v2.py').is_file():return 'stream-collector.py'
+ if host=='dell-control':return 'stream-collector-v2.py'
+ # Publish locally first; switch each remote only after its actual approved
+ # extension succeeded. Pending approvals leave its existing reader in use.
+ try:
+  with sqlite3.connect('file:'+str(BROKER_DATABASE)+'?mode=ro',uri=True,timeout=5) as db:
+   rows=db.execute("SELECT parameters_json FROM actions WHERE runbook_id='security.enable-logstream.v1' AND requested_by='codex-supervised' AND status='succeeded'").fetchall()
+  if any(json.loads(r[0])=={'resource':host,'bundle_sha256':STREAM_V2_BUNDLE} for r in rows):return 'stream-collector-v2.py'
+ except (OSError,ValueError,sqlite3.Error):pass
+ return 'stream-collector.py'
 
 def fetch_route(host,request,stream=False,alternate=False):
  if host not in HOSTS:raise ValueError('Machine invalide')
  payload=json.dumps(request).encode()
- collector='stream-collector.py' if stream else 'collector.py'
+ collector=stream_collector(host) if stream else 'collector.py'
  source=(BASE/collector).read_text() if stream else SOURCE
  if host=='dell-control':
   command=['/usr/bin/python3','-I',str(BASE/collector)];identity={}
@@ -50,11 +64,13 @@ def handle(request):
    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='stream_health'").fetchone():return {'schema_version':1,'host':host,'status':'not_installed','sources':[],'gaps':0}
    rows=db.execute('SELECT source,service,checked,last_success,status,count,backlog FROM stream_health WHERE host=? ORDER BY source,service',(host,)).fetchall()
    sources=[dict(zip(['source','service','checked','last_success','status','count','backlog'],r)) for r in rows]
+   retired=[row for row in sources if row['status']=='retired']
+   sources=[row for row in sources if row['status']!='retired']
    now=time.time()
    for row in sources:
     if now-row['checked']>180:row['status']='stale'
    gaps=db.execute('SELECT count(*) FROM stream_gaps WHERE host=?',(host,)).fetchone()[0]
-   return {'schema_version':1,'host':host,'sources':sources,'gaps':gaps,'checked_at':now,'status':'collecting' if sources and all(r['status'] in {'collecting','discovered'} for r in sources) else 'attention'}
+   return {'schema_version':1,'host':host,'sources':sources,'retired_sources':retired,'gaps':gaps,'checked_at':now,'status':'collecting' if sources and all(r['status'] in {'collecting','discovered'} for r in sources) else 'attention'}
   if action=='archive':
    if set(request)-{'action','since','until','service','source','limit','before'}:raise ValueError('Paramètre invalide')
    since,until=request.get('since'),request.get('until')

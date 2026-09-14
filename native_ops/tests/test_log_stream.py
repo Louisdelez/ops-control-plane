@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 import pytest
 
-@pytest.fixture
-def stream():
- spec=importlib.util.spec_from_file_location('log_stream_test',Path(__file__).parents[1]/'logs/stream-collector.py')
+@pytest.fixture(params=['stream-collector.py','stream-collector-v2.py'])
+def stream(request):
+ spec=importlib.util.spec_from_file_location('log_stream_test',Path(__file__).parents[1]/'logs'/request.param)
  module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
  return module
 
@@ -125,3 +125,16 @@ def test_remote_extension_sudo_grant_matches_every_sealed_runbook_invocation():
   for bundle in value['parameters']['bundle_sha256']['values']:
    command=' '.join(x.format(resource=resource,bundle_sha256=bundle) for x in value['command']['argv'][2:])
    assert 'opsbroker ALL=(root) NOPASSWD: '+command in grants
+
+def test_retired_source_keeps_archive_cursor_and_records_unfinished_backlog(store):
+ value=batch();value['records'][0].update(source='docker',service='fixture')
+ store.commit('dell-control','docker','container-id',{},100,{**value,'more':True})
+ store.retire_removed_sources('dell-control',set())
+ store.retire_removed_sources('dell-control',set())
+ with store.database() as db:
+  assert db.execute('SELECT count(*) FROM entries').fetchone()[0]==1
+  assert db.execute('SELECT count(*) FROM stream_cursors').fetchone()[0]==1
+  assert db.execute('SELECT status FROM stream_health').fetchone()[0]=='retired'
+  assert db.execute('SELECT count(*) FROM stream_gaps').fetchone()[0]==1
+ store.commit('dell-control','docker','container-id',value['cursor'],100,value)
+ with store.database() as db:assert db.execute('SELECT status FROM stream_health').fetchone()[0]=='collecting'

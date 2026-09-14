@@ -57,7 +57,7 @@ agents.
 ## Déploiement et validation
 
 Le répartiteur forcé SSH conserve ses cinq commandes précédentes et ajoute
-une sixième commande fixe. Le contenu du collecteur est scellé ; les paramètres
+des commandes fixes versionnées. Le contenu du collecteur est scellé ; les paramètres
 ne permettent ni d’exécuter une commande arbitraire ni de choisir un chemin.
 L’installation locale possède une archive et un retour arrière. L’extension
 sur chaque serveur suit son action réellement approuvée dans Autorisations.
@@ -85,3 +85,17 @@ les points historiques déjà répliqués restent dans les sauvegardes distantes
 Les paquets sont limités à 256 Mio, chaque destination à 20 Gio. Un dépassement
 arrête la copie et doit être traité ; il ne purge aucune donnée. La compression
 réduit le volume mais ne remplace pas la planification de capacité.
+
+
+Le lecteur v2 traite les lignes Docker jusqu’à 2 Mio avant masquage et limite
+chaque passage à environ 8 Mio de données source. Une ligne invalide ou plus
+grande produit un avertissement et un signalement durable ; les lignes
+suivantes restent collectables. Un dépassement n’est donc pas présenté comme
+une lecture complète. Une ligne incomplète de taille normale attend sa fin.
+Les conteneurs disparus sont marqués comme retirés après une découverte complète,
+sans effacer leurs événements ni leurs curseurs. Un retard non vidé au moment
+de leur disparition reste signalé.
+
+Le client sélectionne v2 pour une machine distante seulement après le succès
+de son action d’extension approuvée. Tant que cet accord manque, la collecte
+v1 continue ; l’installation locale de v2 ne modifie aucun serveur.

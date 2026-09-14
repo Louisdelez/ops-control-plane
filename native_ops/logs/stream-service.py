@@ -56,6 +56,16 @@ def failed(host,source,service,status='unavailable'):
  with database() as db:
   db.execute('INSERT INTO stream_health VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(host,source,service) DO UPDATE SET checked=excluded.checked,status=excluded.status',(host,source,service,time.time(),None,status,0,0))
 
+def retire_removed_sources(host,services):
+ """A complete discovery can retire a removed container, never its archived data."""
+ now=time.time()
+ with database() as db:
+  rows=db.execute("SELECT service,backlog FROM stream_health WHERE host=? AND source='docker' AND service!='' AND status!='retired'",(host,)).fetchall()
+  for service,backlog in rows:
+   if service in services:continue
+   if backlog:db.execute('INSERT INTO stream_gaps(host,source,service,detected,reason) VALUES(?,?,?,?,?)',(host,'docker',service,now,'Container removed before backlog drained'))
+   db.execute("UPDATE stream_health SET status='retired',checked=?,backlog=0 WHERE host=? AND source='docker' AND service=?",(now,host,service))
+
 def collect_one(fetch,host,source,service=''):
  cursor,since=position(host,source,service)
  request={'action':'stream','source':source,'cursor':cursor,'since':max(since,int(cursor.get('last_t',since))-1)}
@@ -89,6 +99,7 @@ def worker(host):
      failed(host,'docker','', 'discovery_unavailable')
     else:
      sources=[row['id'] for row in value['containers']]
+     if not value.get('truncated'):retire_removed_sources(host,set(sources))
      failed(host,'docker','', 'source_limit' if value.get('truncated') else 'discovered')
     last_discovery=time.monotonic()
    except Exception:failed(host,'docker','','discovery_unavailable');last_discovery=time.monotonic()

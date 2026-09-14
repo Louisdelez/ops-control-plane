@@ -72,3 +72,20 @@ def test_transport_failover_is_readonly_and_only_for_network_errors(monkeypatch)
  def refused(*a,**kw):raise ValueError('Authentication failed')
  module.fetch_route=refused
  with pytest.raises(ValueError,match='Authentication'):module.fetch('prod',p,True)
+
+def test_v2_reader_requires_successful_approval_for_the_exact_host(tmp_path,monkeypatch):
+ import sqlite3,json,importlib.util
+ collector=Path(__file__).parents[1]/'logs/collector.py';original=Path.read_text
+ monkeypatch.setattr(Path,'read_text',lambda path,*a,**kw:original(collector if str(path)=='/usr/local/libexec/ops-logs/collector.py' else path,*a,**kw))
+ spec=importlib.util.spec_from_file_location('logs_versions',collector.with_name('service.py'));module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+ module.BASE=tmp_path
+ (tmp_path/'stream-collector-v2.py').write_text('fixed fixture')
+ module.BROKER_DATABASE=tmp_path/'broker.db'
+ with sqlite3.connect(module.BROKER_DATABASE) as db:
+  db.execute('CREATE TABLE actions (parameters_json TEXT,runbook_id TEXT,requested_by TEXT,status TEXT)')
+  db.execute('INSERT INTO actions VALUES(?,?,?,?)',(json.dumps({'resource':'prod','bundle_sha256':module.STREAM_V2_BUNDLE}),'security.enable-logstream.v1','codex-supervised','pending_approval'))
+ assert module.stream_collector('dell-control')=='stream-collector-v2.py'
+ assert module.stream_collector('prod')=='stream-collector.py'
+ with sqlite3.connect(module.BROKER_DATABASE) as db:db.execute("UPDATE actions SET status='succeeded'")
+ assert module.stream_collector('prod')=='stream-collector-v2.py'
+ assert module.stream_collector('nas')=='stream-collector.py'

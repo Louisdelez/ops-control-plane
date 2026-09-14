@@ -2,7 +2,7 @@ id: security.enable-logstream.v1
 version: 1
 project: infra-shared
 action_class: C
-description: "Activer la collecte continue systemd/Docker json-file avec curseurs de reprise, lots de 200 messages masqués et erreurs explicites ; préserver les cinq collecteurs existants et les données des applications"
+description: "Activer la collecte continue systemd/Docker json-file avec curseurs de reprise, lots de 200 messages masqués et erreurs explicites ; préserver les collecteurs existants ; correctif v2 pour grandes lignes Docker et signalements de pertes et les données des applications"
 timeout_seconds: 180
 command:
   argv: [/usr/bin/sudo, -n, /usr/local/libexec/ops-runbooks/enable-logstream, "{resource}", "{bundle_sha256}"]
@@ -12,7 +12,7 @@ parameters:
     values: [edge-vps, prod, nas, gamebox]
   bundle_sha256:
     type: enum
-    values: [4516ad2ab4a537b5620e528d671f9b587528f79446e3ad4506bad8a782c86a24]
+    values: [4516ad2ab4a537b5620e528d671f9b587528f79446e3ad4506bad8a782c86a24, 71e1061ab888119ccb0149bda359fe0edc551be72346a5aff2e3b9925bcf1ad2]
 output:
   max_bytes: 16384
   redact: true

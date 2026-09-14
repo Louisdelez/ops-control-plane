@@ -35,7 +35,13 @@ def extract(archive,target,expected):
 
 def run(*args,stdin=None,timeout=180):
     p=subprocess.run(args,stdin=stdin,capture_output=True,timeout=timeout)
-    if p.returncode:raise RuntimeError('Disposable restore command failed')
+    if p.returncode:
+        # Command category and exit code only; SQL, provider bodies and stderr
+        # can contain private state and must never enter the proof.
+        error=RuntimeError('Disposable restore command failed')
+        error.command_category=Path(args[0]).name+(':'+args[1] if args[0]=='docker' and args[1] in {'run','exec','inspect','rm'} else '')
+        error.return_code=p.returncode
+        raise error
     return p.stdout
 
 def decrypt(source,target):
@@ -113,7 +119,9 @@ def main():
             assert value['full_restore_verified'] and value['network_isolated'] and not value['host_vault_contacted']
             report['openbao']={'restored':True,'owner_authentication_verified':value['owner_authentication_verified'],'network_isolated':True}
         report.update(status='verified',application_data_restore_verified=True)
-    except Exception as exc:report.update(status='failed',failed_stage=stage,exception_type=type(exc).__name__)
+    except Exception as exc:
+        report.update(status='failed',failed_stage=stage,exception_type=type(exc).__name__)
+        if hasattr(exc,'command_category'):report.update(command_category=exc.command_category,return_code=exc.return_code)
     report['finished_at']=time.time();destination=BASE/('proof-'+str(time.time_ns())+'.json');destination.write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report));return 0 if report['status']=='verified' else 1
 if __name__=='__main__':raise SystemExit(main())
